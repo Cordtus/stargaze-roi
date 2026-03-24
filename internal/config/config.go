@@ -28,12 +28,8 @@ type ChainConfig struct {
 
 // ContractConfig holds the target contract addresses to monitor.
 type ContractConfig struct {
-	// Addresses is the list of CosmWasm contract addresses to monitor
+	// Addresses is the list of CosmWasm contract addresses to monitor for fee revenue
 	Addresses []string `toml:"addresses"`
-	// BurnAttribute is the event attribute key containing the burn amount
-	BurnAttribute string `toml:"burn_attribute"`
-	// BurnAction is the wasm action that indicates a burn (e.g., "burn", "burn_tokens")
-	BurnAction string `toml:"burn_action"`
 }
 
 // CoinGeckoConfig holds price API settings.
@@ -144,12 +140,6 @@ func (c *Config) setDefaults() {
 	}
 	if c.Server.StaticDir == "" {
 		c.Server.StaticDir = "./static"
-	}
-	if c.Contract.BurnAttribute == "" {
-		c.Contract.BurnAttribute = "amount"
-	}
-	if c.Contract.BurnAction == "" {
-		c.Contract.BurnAction = "burn"
 	}
 }
 

@@ -1,11 +1,10 @@
-// Package processor handles processing wasm events from the chain into burn records.
+// Package processor handles processing contract transactions from the chain into fee revenue records.
 package processor
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,15 +15,13 @@ import (
 	"github.com/cordt-sei/starmos-roi-tracker/internal/price"
 )
 
-// Processor queries the chain for wasm events and creates burn records with USD values.
+// Processor queries the chain for Stargaze contract transactions and records fee revenue.
 type Processor struct {
 	pool              *pgxpool.Pool
 	chainClient       *chain.Client
 	priceFetcher      *price.Fetcher
 	logger            *slog.Logger
 	contractAddresses []string
-	burnAction        string
-	burnAttribute     string
 	chainID           string
 	stopCh            chan struct{}
 }
@@ -37,14 +34,12 @@ func New(pool *pgxpool.Pool, chainClient *chain.Client, priceFetcher *price.Fetc
 		priceFetcher:      priceFetcher,
 		logger:            logger,
 		contractAddresses: cfg.Contract.Addresses,
-		burnAction:        cfg.Contract.BurnAction,
-		burnAttribute:     cfg.Contract.BurnAttribute,
 		chainID:           cfg.Chain.ChainID,
 		stopCh:            make(chan struct{}),
 	}
 }
 
-// Start begins processing wasm events from the chain via gRPC.
+// Start begins processing contract transactions from the chain via gRPC.
 func (p *Processor) Start(ctx context.Context) error {
 	if len(p.contractAddresses) == 0 {
 		p.logger.Warn("no contract addresses configured, processor will idle until configured")
@@ -56,13 +51,11 @@ func (p *Processor) Start(ctx context.Context) error {
 		}
 	}
 
-	p.logger.Info("starting event processor",
+	p.logger.Info("starting fee revenue processor",
 		"contracts", len(p.contractAddresses),
-		"burn_action", p.burnAction,
 		"chain_id", p.chainID,
 	)
 
-	// Process loop
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
@@ -73,8 +66,8 @@ func (p *Processor) Start(ctx context.Context) error {
 		case <-p.stopCh:
 			return nil
 		case <-ticker.C:
-			if err := p.processNewEvents(ctx); err != nil {
-				p.logger.Warn("failed to process events", "error", err)
+			if err := p.processNewTxs(ctx); err != nil {
+				p.logger.Warn("failed to process transactions", "error", err)
 			}
 		}
 	}
@@ -85,9 +78,8 @@ func (p *Processor) Stop() {
 	close(p.stopCh)
 }
 
-// processNewEvents queries the chain for new wasm events and processes burns.
-func (p *Processor) processNewEvents(ctx context.Context) error {
-	// Get last processed height from sync state
+// processNewTxs queries the chain for new contract transactions and records their fees.
+func (p *Processor) processNewTxs(ctx context.Context) error {
 	var lastHeight int64
 	err := p.pool.QueryRow(ctx, `
 		SELECT last_processed_event_id FROM roi_tracker.sync_state WHERE id = 1
@@ -99,29 +91,25 @@ func (p *Processor) processNewEvents(ctx context.Context) error {
 	var maxHeight int64 = lastHeight
 	var processedCount int
 
-	// Query each contract
 	for _, contractAddr := range p.contractAddresses {
-		events, err := p.chainClient.QueryWasmEvents(ctx, contractAddr, lastHeight, 100)
+		txs, err := p.chainClient.QueryContractTxs(ctx, contractAddr, lastHeight, 100)
 		if err != nil {
-			p.logger.Warn("failed to query events", "contract", contractAddr, "error", err)
+			p.logger.Warn("failed to query txs", "contract", contractAddr, "error", err)
 			continue
 		}
 
-		for _, evt := range events {
-			if evt.Height > maxHeight {
-				maxHeight = evt.Height
+		for _, tx := range txs {
+			if tx.Height > maxHeight {
+				maxHeight = tx.Height
 			}
 
-			if !p.isBurnAction(evt.Action) {
+			if tx.FeeUatom <= 0 {
 				continue
 			}
 
-			burnAmount, ok := p.extractBurnAmount(evt.Attrs)
-			if !ok {
-				continue
-			}
+			feeUatom := decimal.NewFromInt(tx.FeeUatom)
 
-			timestamp := evt.Timestamp
+			timestamp := tx.Timestamp
 			if timestamp.IsZero() {
 				timestamp = time.Now()
 			}
@@ -129,9 +117,7 @@ func (p *Processor) processNewEvents(ctx context.Context) error {
 			atomPrice, err := p.priceFetcher.GetPrice(ctx, timestamp)
 			if err != nil {
 				p.logger.Warn("failed to get historical price, using current",
-					"tx_hash", evt.TxHash,
-					"error", err,
-				)
+					"tx_hash", tx.TxHash, "error", err)
 				atomPrice, err = p.priceFetcher.GetCurrentPrice(ctx)
 				if err != nil {
 					p.logger.Error("failed to get any price", "error", err)
@@ -139,33 +125,33 @@ func (p *Processor) processNewEvents(ctx context.Context) error {
 				}
 			}
 
-			usdValue := price.CalculateUSD(burnAmount, atomPrice)
+			usdValue := price.CalculateUSD(feeUatom, atomPrice)
 
+			// Use tx_hash for dedup (wasm_event_id column repurposed as unique key)
 			_, err = p.pool.Exec(ctx, `
 				INSERT INTO roi_tracker.processed_burns
 				(wasm_event_id, tx_hash, height, timestamp, uatom_amount, atom_price_usd, usd_value, sender)
 				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 				ON CONFLICT (wasm_event_id) DO NOTHING
-			`, evt.Height, evt.TxHash, evt.Height, timestamp, burnAmount.String(), atomPrice.String(), usdValue.String(), evt.Sender)
+			`, tx.Height, tx.TxHash, tx.Height, timestamp, feeUatom.String(), atomPrice.String(), usdValue.String(), tx.Sender)
 
 			if err != nil {
-				p.logger.Error("failed to insert burn", "tx_hash", evt.TxHash, "error", err)
+				p.logger.Error("failed to insert fee record", "tx_hash", tx.TxHash, "error", err)
 				continue
 			}
 
 			processedCount++
-			p.logger.Info("processed burn",
-				"tx_hash", evt.TxHash,
-				"height", evt.Height,
-				"contract", contractAddr,
-				"uatom", burnAmount.String(),
+			p.logger.Info("recorded fee revenue",
+				"tx_hash", tx.TxHash,
+				"height", tx.Height,
+				"action", tx.Action,
+				"fee_uatom", tx.FeeUatom,
 				"atom_price", atomPrice.StringFixed(4),
 				"usd", usdValue.StringFixed(6),
 			)
 		}
 	}
 
-	// Update sync state with the highest height we've seen
 	if maxHeight > lastHeight {
 		_, err = p.pool.Exec(ctx, `
 			UPDATE roi_tracker.sync_state
@@ -178,49 +164,11 @@ func (p *Processor) processNewEvents(ctx context.Context) error {
 
 		if processedCount > 0 {
 			p.logger.Info("processing complete",
-				"burns_processed", processedCount,
+				"fees_recorded", processedCount,
 				"last_height", maxHeight,
 			)
 		}
 	}
 
 	return nil
-}
-
-// isBurnAction checks if the action indicates a burn event.
-func (p *Processor) isBurnAction(action string) bool {
-	return action == p.burnAction || action == "burn" || action == "burn_tokens" || action == "burn_from"
-}
-
-// extractBurnAmount extracts the burn amount from event attributes.
-func (p *Processor) extractBurnAmount(attrs map[string]string) (decimal.Decimal, bool) {
-	// Try configured attribute first
-	amountStr := attrs[p.burnAttribute]
-	if amountStr == "" {
-		amountStr = attrs["amount"]
-	}
-	if amountStr == "" {
-		amountStr = attrs["burn_amount"]
-	}
-	if amountStr == "" {
-		return decimal.Zero, false
-	}
-
-	// Clean the amount string - remove denom suffix
-	amountStr = strings.TrimSuffix(amountStr, "uatom")
-	amountStr = strings.TrimSuffix(amountStr, "atom")
-	amountStr = strings.TrimSpace(amountStr)
-
-	// Parse as decimal
-	amount, err := decimal.NewFromString(amountStr)
-	if err != nil {
-		return decimal.Zero, false
-	}
-
-	// Must be positive
-	if amount.LessThanOrEqual(decimal.Zero) {
-		return decimal.Zero, false
-	}
-
-	return amount, true
 }

@@ -17,10 +17,6 @@ addresses = [
     # Migration VMF (ATOM)
     "cosmos1qza83ve4xr6gk2aqk5h55falkujfku8y9xec07c45av4rvr2lh0swstpzn",
 ]
-# The wasm event action that indicates a burn
-burn_action = "burn"
-# The event attribute that contains the burn amount (in uatom)
-burn_attribute = "amount"
 
 [coingecko]
 api_base = "https://api.coingecko.com/api/v3"

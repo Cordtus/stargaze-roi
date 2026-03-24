@@ -1,4 +1,4 @@
-// Package chain provides a gRPC client for querying CosmWasm events from the Cosmos Hub.
+// Package chain provides a gRPC client for querying CosmWasm transaction data from the Cosmos Hub.
 package chain
 
 import (
@@ -13,9 +13,9 @@ import (
 )
 
 const (
-	methodGetTxsEvent  = "cosmos.tx.v1beta1.Service.GetTxsEvent"
-	methodGetNodeInfo  = "cosmos.base.tendermint.v1beta1.Service.GetNodeInfo"
-	methodLatestBlock  = "cosmos.base.tendermint.v1beta1.Service.GetLatestBlock"
+	methodGetTxsEvent = "cosmos.tx.v1beta1.Service.GetTxsEvent"
+	methodGetNodeInfo = "cosmos.base.tendermint.v1beta1.Service.GetNodeInfo"
+	methodLatestBlock = "cosmos.base.tendermint.v1beta1.Service.GetLatestBlock"
 
 	defaultDialTimeout = 30 * time.Second
 )
@@ -57,34 +57,27 @@ func (c *Client) Close() error {
 	return nil
 }
 
-// WasmEvent represents a parsed wasm contract event from on-chain data.
-type WasmEvent struct {
+// ContractTx represents a transaction that interacted with a tracked contract.
+type ContractTx struct {
 	TxHash    string
 	Height    int64
 	Sender    string
-	Contract  string
+	FeeUatom  int64 // Gas fee paid in uatom
 	Action    string
-	Attrs     map[string]string
+	Contract  string
 	Timestamp time.Time
 }
 
-// txsEventResponse represents the decoded GetTxsEvent gRPC response.
-type txsEventResponse struct {
-	TxResponses []txResponse `json:"txResponses"`
-	Pagination  *pagination  `json:"pagination,omitempty"`
-}
-
+// txResponse represents a decoded transaction response.
+// Events are at the top level (not nested in logs) in newer SDK versions.
 type txResponse struct {
-	Height string `json:"height"`
-	TxHash string `json:"txhash"`
-	Code   uint32 `json:"code"`
-	Logs   []txLog `json:"logs"`
-	Timestamp string `json:"timestamp"`
-}
-
-type txLog struct {
-	MsgIndex int       `json:"msgIndex"`
-	Events   []txEvent `json:"events"`
+	Height    string    `json:"height"`
+	TxHash    string    `json:"txhash"`
+	Code      uint32    `json:"code"`
+	Events    []txEvent `json:"events"`
+	Timestamp string    `json:"timestamp"`
+	GasWanted string    `json:"gasWanted"`
+	GasUsed   string    `json:"gasUsed"`
 }
 
 type txEvent struct {
@@ -97,19 +90,24 @@ type txAttribute struct {
 	Value string `json:"value"`
 }
 
+type txsResponse struct {
+	TxResponses []txResponse `json:"txResponses"`
+	Pagination  *pagination  `json:"pagination,omitempty"`
+}
+
 type pagination struct {
 	NextKey string `json:"nextKey,omitempty"`
 	Total   string `json:"total,omitempty"`
 }
 
-// QueryWasmEvents queries the chain for wasm events matching the contract address
-// after the given height. Returns events sorted ascending by height.
-func (c *Client) QueryWasmEvents(ctx context.Context, contractAddr string, afterHeight int64, limit int) ([]WasmEvent, error) {
+// QueryContractTxs queries the chain for transactions involving the given contract
+// after the given height. Returns transactions sorted ascending by height.
+func (c *Client) QueryContractTxs(ctx context.Context, contractAddr string, afterHeight int64, limit int) ([]ContractTx, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 
-	var allEvents []WasmEvent
+	var allTxs []ContractTx
 	var pageKey string
 
 	for {
@@ -133,75 +131,90 @@ func (c *Client) QueryWasmEvents(ctx context.Context, contractAddr string, after
 			return nil, fmt.Errorf("GetTxsEvent: %w", err)
 		}
 
-		var result txsEventResponse
+		var result txsResponse
 		if err := json.Unmarshal(resp, &result); err != nil {
 			return nil, fmt.Errorf("parsing response: %w", err)
 		}
 
-		events := c.extractWasmEvents(result.TxResponses, contractAddr)
-		allEvents = append(allEvents, events...)
+		txs := c.extractContractTxs(result.TxResponses, contractAddr)
+		allTxs = append(allTxs, txs...)
 
-		// Stop if no more pages or we've collected enough
 		if result.Pagination == nil || result.Pagination.NextKey == "" {
 			break
 		}
 		pageKey = result.Pagination.NextKey
 	}
 
-	return allEvents, nil
+	return allTxs, nil
 }
 
-// extractWasmEvents pulls wasm events from transaction responses for the target contract.
-func (c *Client) extractWasmEvents(txResponses []txResponse, contractAddr string) []WasmEvent {
-	var events []WasmEvent
+// extractContractTxs parses transaction responses into ContractTx structs.
+// Events are at txResponse.events[] (top-level), not in logs.
+func (c *Client) extractContractTxs(txResponses []txResponse, contractAddr string) []ContractTx {
+	var txs []ContractTx
+	seen := map[string]bool{} // Dedup by tx hash (multiple wasm events per tx)
 
 	for _, txResp := range txResponses {
-		if txResp.Code != 0 {
-			continue // Skip failed transactions
+		if txResp.Code != 0 || seen[txResp.TxHash] {
+			continue
 		}
+		seen[txResp.TxHash] = true
 
 		var height int64
 		fmt.Sscanf(txResp.Height, "%d", &height)
 
 		ts, _ := time.Parse(time.RFC3339, txResp.Timestamp)
 
-		for _, log := range txResp.Logs {
-			for _, event := range log.Events {
-				if event.Type != "wasm" {
-					continue
-				}
+		ct := ContractTx{
+			TxHash:    txResp.TxHash,
+			Height:    height,
+			Contract:  contractAddr,
+			Timestamp: ts,
+		}
 
-				we := WasmEvent{
-					TxHash:    txResp.TxHash,
-					Height:    height,
-					Timestamp: ts,
-					Attrs:     make(map[string]string),
-				}
-
-				for _, attr := range event.Attributes {
-					we.Attrs[attr.Key] = attr.Value
-
-					switch attr.Key {
-					case "_contract_address":
-						we.Contract = attr.Value
-					case "action":
-						we.Action = attr.Value
-					case "sender":
-						we.Sender = attr.Value
+		// Extract fee from the first coin_spent event (tx fee payment)
+		// Extract wasm action and sender from wasm events
+		feeFound := false
+		for _, evt := range txResp.Events {
+			switch evt.Type {
+			case "coin_spent":
+				if !feeFound {
+					for _, a := range evt.Attributes {
+						if a.Key == "amount" {
+							ct.FeeUatom = parseUatomAmount(a.Value)
+							feeFound = true
+						}
+						if a.Key == "spender" {
+							ct.Sender = a.Value
+						}
 					}
 				}
-
-				// Only include events for our target contract
-				if we.Contract != contractAddr {
-					continue
+			case "wasm":
+				for _, a := range evt.Attributes {
+					if a.Key == "action" && ct.Action == "" {
+						ct.Action = a.Value
+					}
 				}
-
-				events = append(events, we)
 			}
 		}
+
+		txs = append(txs, ct)
 	}
 
-	return events
+	return txs
+}
+
+// parseUatomAmount extracts uatom amount from a string like "6417uatom" or "100000uatom".
+// Returns 0 if the denom is not uatom or parsing fails.
+func parseUatomAmount(s string) int64 {
+	s = strings.TrimSpace(s)
+	if !strings.HasSuffix(s, "uatom") {
+		return 0
+	}
+	numStr := strings.TrimSuffix(s, "uatom")
+	var amount int64
+	fmt.Sscanf(numStr, "%d", &amount)
+	return amount
 }
 
 // GetChainID fetches the chain ID from the node.

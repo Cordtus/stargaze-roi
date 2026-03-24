@@ -16,8 +16,6 @@ grpc_endpoint = "grpc.example.com:443"
 
 [contract]
 addresses = ["cosmos1abc", "cosmos1def"]
-burn_action = "burn"
-burn_attribute = "amount"
 
 [coingecko]
 api_base = "https://api.coingecko.com/api/v3"
@@ -59,8 +57,8 @@ func TestLoadConfig(t *testing.T) {
 	if cfg.Target.MultisigAddress != "cosmos1vdqfavw0cu0fpvlcl52ku3qztt38szktlpfsuz" {
 		t.Errorf("MultisigAddress = %q", cfg.Target.MultisigAddress)
 	}
-	if cfg.Contract.BurnAction != "burn" {
-		t.Errorf("BurnAction = %q, want burn", cfg.Contract.BurnAction)
+	if len(cfg.Contract.Addresses) != 2 {
+		t.Errorf("Addresses count = %d, want 2", len(cfg.Contract.Addresses))
 	}
 }
 

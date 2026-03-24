@@ -112,25 +112,25 @@ func (w *responseWriter) WriteHeader(code int) {
 
 // StatsResponse is the response for the /api/stats endpoint.
 type StatsResponse struct {
-	TargetUSD          string   `json:"target_usd"`
-	TotalBurnedUSD     string   `json:"total_burned_usd"`
-	TotalBurnedAtom    string   `json:"total_burned_atom"`
-	TransactionCount   int64    `json:"transaction_count"`
-	ProgressPercent    string   `json:"progress_percent"`
-	AvgAtomPriceUSD    string   `json:"avg_atom_price_usd"`
-	YearsToBreakeven   *float64 `json:"years_to_breakeven"`
-	FirstBurnTimestamp *string  `json:"first_burn_timestamp,omitempty"`
-	LastBurnTimestamp  *string  `json:"last_burn_timestamp,omitempty"`
-	UpdatedAt          string   `json:"updated_at"`
-	LastProcessedID    int64    `json:"last_processed_event_id"`
-	ContractAddress    string   `json:"contract_address,omitempty"`
-	ChainID            string   `json:"chain_id"`
-	ProposalID         int      `json:"proposal_id,omitempty"`
-	GrantAtom          string   `json:"grant_atom,omitempty"`
-	MultisigAddress    string   `json:"multisig_address,omitempty"`
+	TargetUSD        string   `json:"target_usd"`
+	TotalFeesUSD     string   `json:"total_fees_usd"`
+	TotalFeesAtom    string   `json:"total_fees_atom"`
+	TransactionCount int64    `json:"transaction_count"`
+	ProgressPercent  string   `json:"progress_percent"`
+	AvgAtomPriceUSD  string   `json:"avg_atom_price_usd"`
+	YearsToBreakeven *float64 `json:"years_to_breakeven"`
+	FirstTxTimestamp *string  `json:"first_tx_timestamp,omitempty"`
+	LastTxTimestamp  *string  `json:"last_tx_timestamp,omitempty"`
+	UpdatedAt        string   `json:"updated_at"`
+	LastProcessedID  int64    `json:"last_processed_event_id"`
+	ContractInfo     string   `json:"contract_info,omitempty"`
+	ChainID          string   `json:"chain_id"`
+	ProposalID       int      `json:"proposal_id,omitempty"`
+	GrantAtom        string   `json:"grant_atom,omitempty"`
+	MultisigAddress  string   `json:"multisig_address,omitempty"`
 }
 
-// handleStats returns the current burn statistics.
+// handleStats returns the current fee revenue statistics.
 func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	stats, err := db.GetStats(r.Context(), s.pool)
 	if err != nil {
@@ -152,14 +152,14 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 	resp := StatsResponse{
 		TargetUSD:        target.StringFixed(2),
-		TotalBurnedUSD:   stats.TotalUSDBurned.StringFixed(10),
-		TotalBurnedAtom:  totalAtom.StringFixed(6),
+		TotalFeesUSD:     stats.TotalUSDBurned.StringFixed(10),
+		TotalFeesAtom:    totalAtom.StringFixed(6),
 		TransactionCount: stats.TransactionCount,
 		ProgressPercent:  progressPercent.StringFixed(10),
 		AvgAtomPriceUSD:  stats.AvgAtomPriceUSD.StringFixed(6),
 		UpdatedAt:        stats.LastUpdated.Format(time.RFC3339),
 		LastProcessedID:  stats.LastProcessedID,
-		ContractAddress:  stats.ContractAddress,
+		ContractInfo:     stats.ContractAddress,
 		ChainID:          stats.ChainID,
 		ProposalID:       s.cfg.Target.ProposalID,
 		GrantAtom:        s.cfg.GrantAtom().StringFixed(6),
@@ -168,14 +168,14 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 	if stats.FirstBurnTimestamp != nil {
 		ts := stats.FirstBurnTimestamp.Format(time.RFC3339)
-		resp.FirstBurnTimestamp = &ts
+		resp.FirstTxTimestamp = &ts
 	}
 	if stats.LastBurnTimestamp != nil {
 		ts := stats.LastBurnTimestamp.Format(time.RFC3339)
-		resp.LastBurnTimestamp = &ts
+		resp.LastTxTimestamp = &ts
 	}
 
-	// Calculate years to break even based on daily burn rate
+	// Calculate years to break even based on daily fee revenue rate
 	if stats.FirstBurnTimestamp != nil && stats.TotalUSDBurned.GreaterThan(decimal.Zero) {
 		daysSinceFirst := time.Since(*stats.FirstBurnTimestamp).Hours() / 24
 		if daysSinceFirst > 0 {
