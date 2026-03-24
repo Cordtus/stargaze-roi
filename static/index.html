@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Stargaze ROI Tracker</title>
+	<meta name="description" content="Tracking burn revenue from the Stargaze NFT marketplace migration to Cosmos Hub (Proposal #1017)">
+	<link rel="stylesheet" href="style.css">
+</head>
+<body>
+	<div class="container">
+		<header>
+			<h1>Stargaze ROI Tracker</h1>
+			<p class="subtitle">Tracking burn revenue from the Stargaze NFT marketplace on Cosmos Hub</p>
+			<p class="proposal-info" id="proposal-info"></p>
+		</header>
+
+		<main>
+			<div class="progress-section">
+				<div class="target-label">
+					<span class="label">Grant Amount</span>
+					<span class="value" id="target-amount">$1,500,000.00</span>
+				</div>
+
+				<div class="progress-container">
+					<div class="progress-bar" id="progress-bar">
+						<span class="progress-text" id="progress-text">0%</span>
+					</div>
+				</div>
+
+				<div class="stats-row">
+					<div class="stat">
+						<span class="label">Total Burned (USD)</span>
+						<span class="value" id="burned-usd">$0.00</span>
+					</div>
+					<div class="stat">
+						<span class="label">Total Burned (ATOM)</span>
+						<span class="value" id="burned-atom">0.000000</span>
+					</div>
+					<div class="stat">
+						<span class="label">Transactions</span>
+						<span class="value" id="tx-count">0</span>
+					</div>
+					<div class="stat">
+						<span class="label">Grant Amount (ATOM)</span>
+						<span class="value" id="grant-atom">-</span>
+					</div>
+					<div class="stat">
+						<span class="label">Avg ATOM Price (VWAP)</span>
+						<span class="value" id="avg-atom-price">$0.00</span>
+					</div>
+				</div>
+			</div>
+
+			<div class="details-section">
+				<div class="detail-row">
+					<span class="label">Progress</span>
+					<span class="value" id="progress-percent">0.0000000000%</span>
+				</div>
+				<div class="detail-row">
+					<span class="label">Years to Break Even (at current rate)</span>
+					<span class="value" id="years-estimate">N/A</span>
+				</div>
+				<div class="detail-row">
+					<span class="label">First Burn</span>
+					<span class="value" id="first-burn">-</span>
+				</div>
+				<div class="detail-row">
+					<span class="label">Last Burn</span>
+					<span class="value" id="last-burn">-</span>
+				</div>
+				<div class="detail-row">
+					<span class="label">Last Processed Event</span>
+					<span class="value" id="synced-height">-</span>
+				</div>
+				<div class="detail-row">
+					<span class="label">Chain</span>
+					<span class="value" id="chain-id">cosmoshub-4</span>
+				</div>
+			</div>
+
+			<div class="update-info">
+				<span id="data-updated">Data updated: -</span>
+				<span id="page-loaded">-</span>
+			</div>
+		</main>
+
+		<footer>
+			<p>
+				Data sourced from Cosmos Hub. Price data from CoinGecko.
+				<br>
+				<a href="https://github.com/cordt-sei/starmos-roi-tracker" target="_blank" rel="noopener">Source Code</a>
+			</p>
+		</footer>
+	</div>
+
+	<script>
+		const API_URL = '/api/stats';
+
+		async function loadStats() {
+			try {
+				const response = await fetch(API_URL);
+				if (!response.ok) throw new Error(`HTTP ${response.status}`);
+				const data = await response.json();
+				displayStats(data);
+			} catch (error) {
+				console.error('Failed to load stats:', error);
+				document.getElementById('data-updated').textContent = 'Failed to load data';
+			}
+		}
+
+		function num(v) { return parseFloat(v) || 0; }
+
+		function displayStats(s) {
+			const pct = Math.min(num(s.progress_percent), 100);
+			document.getElementById('progress-bar').style.width = `${Math.max(pct, 0.1)}%`;
+			document.getElementById('progress-text').textContent = `${pct.toFixed(4)}%`;
+
+			document.getElementById('target-amount').textContent = formatUSD(s.target_usd);
+			document.getElementById('burned-usd').textContent = formatUSD(s.total_burned_usd, 10);
+			document.getElementById('burned-atom').textContent = `${num(s.total_burned_atom).toFixed(6)} ATOM`;
+			document.getElementById('tx-count').textContent = (s.transaction_count || 0).toLocaleString();
+			document.getElementById('progress-percent').textContent = `${num(s.progress_percent).toFixed(10)}%`;
+			document.getElementById('avg-atom-price').textContent = formatUSD(s.avg_atom_price_usd, 6);
+
+			// Grant ATOM amount
+			const grantAtom = num(s.grant_atom);
+			document.getElementById('grant-atom').textContent = grantAtom > 0 ? `${grantAtom.toLocaleString()} ATOM` : '-';
+
+			// Proposal info
+			if (s.proposal_id) {
+				document.getElementById('proposal-info').textContent = `Cosmos Hub Governance Proposal #${s.proposal_id}`;
+			}
+
+			// Years estimate
+			const years = s.years_to_breakeven;
+			if (years === null || years === undefined) {
+				document.getElementById('years-estimate').textContent = 'Insufficient data';
+			} else if (years > 1000000) {
+				document.getElementById('years-estimate').textContent = '> 1,000,000 years';
+			} else if (years > 1000) {
+				document.getElementById('years-estimate').textContent = `${Math.round(years).toLocaleString()} years`;
+			} else {
+				document.getElementById('years-estimate').textContent = `${years.toFixed(1)} years`;
+			}
+
+			// Timestamps
+			document.getElementById('first-burn').textContent = s.first_burn_timestamp ? formatDate(s.first_burn_timestamp) : '-';
+			document.getElementById('last-burn').textContent = s.last_burn_timestamp ? formatDate(s.last_burn_timestamp) : '-';
+			document.getElementById('synced-height').textContent = s.last_processed_event_id ? s.last_processed_event_id.toLocaleString() : '-';
+			document.getElementById('chain-id').textContent = s.chain_id || 'cosmoshub-4';
+
+			// Update times
+			document.getElementById('data-updated').textContent = s.updated_at ? `Data updated: ${formatDate(s.updated_at)}` : 'Data updated: -';
+			document.getElementById('page-loaded').textContent = `Loaded: ${new Date().toLocaleString()}`;
+		}
+
+		function formatUSD(value, decimals = 2) {
+			const v = num(value);
+			if (v < 0.01 && v > 0) return `$${v.toFixed(Math.min(decimals, 10))}`;
+			return `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: decimals })}`;
+		}
+
+		function formatDate(iso) {
+			return new Date(iso).toLocaleString();
+		}
+
+		loadStats();
+
+		document.addEventListener('visibilitychange', () => {
+			if (document.visibilityState === 'visible') loadStats();
+		});
+	</script>
+</body>
+</html>

@@ -1,0 +1,54 @@
+# Stargaze ROI Tracker Configuration
+# This service connects to the same PostgreSQL database as CosmoFlow-Maps
+
+[chain]
+chain_id = "cosmoshub-4"
+grpc_endpoint = "grpc-bd79106337ec-archive.cosmoshub-main.ccvalidators.com:443"
+
+[contract]
+# Stargaze contract addresses on Cosmos Hub
+addresses = [
+    # Marketplace v2 - where trades happen and fees are collected
+    "cosmos1tl0ptdmlz422z5pj20zujzyt3c96qp2g9vp83uj9pyj8q994tzhsl77adr",
+    # Royalty Registry - manages creator royalty splits
+    "cosmos1gm9qzhzdw3wgqev6qlnn4v7edkmkpzk6fe9q5hzffdq6yuqtn3psuk39my",
+    # VMF (ATOM) - primary sales mint fees
+    "cosmos120a2fpwq97v3mk0zdggfxfrzrvv5f6sny5sf2q96x9enf4qn784q2jtp2h",
+    # Migration VMF (ATOM)
+    "cosmos1qza83ve4xr6gk2aqk5h55falkujfku8y9xec07c45av4rvr2lh0swstpzn",
+]
+# The wasm event action that indicates a burn
+burn_action = "burn"
+# The event attribute that contains the burn amount (in uatom)
+burn_attribute = "amount"
+
+[coingecko]
+api_base = "https://api.coingecko.com/api/v3"
+# Conservative rate limit for free tier (10-30/min allowed)
+rate_limit_per_minute = 10
+# Cache prices for this many minutes
+cache_minutes = 1
+# Optional: CoinGecko demo API key for higher limits
+# api_key = ""
+
+[target]
+# The grant amount in USD ($1.375M milestones + $125K ATOM incentives)
+usd_amount = "1500000.00"
+# When the proposal passed (voting end ~2025-11-21)
+grant_date = "2025-11-21"
+# Cosmos Hub Governance Proposal #1017
+proposal_id = 1017
+# 699,626 ATOM transferred from community pool (in uatom)
+grant_uatom_amount = "699626000000"
+# Fund management multisig
+multisig_address = "cosmos1vdqfavw0cu0fpvlcl52ku3qztt38szktlpfsuz"
+
+[server]
+port = 8080
+static_dir = "./static"
+
+[database]
+# PostgreSQL connection string - same database as CosmoFlow-Maps
+# The ROI tracker creates its own schema (roi_tracker) within this database
+# Can be overridden with DATABASE_URL environment variable
+conn_string = "postgres://localhost:5432/cosmoflow?sslmode=disable"

@@ -1,0 +1,36 @@
+# Fly.io configuration for Stargaze ROI Tracker
+# This service connects to an external PostgreSQL database (shared with CosmoFlow-Maps)
+# Deploy with: fly launch / fly deploy
+
+app = "starmos-roi-tracker"
+primary_region = "sjc"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # Config is embedded in the Docker image
+  # Database URL should be set as a secret: fly secrets set DATABASE_URL=postgres://...
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "suspend"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 100
+    soft_limit = 80
+
+[[http_service.checks]]
+  grace_period = "30s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  path = "/health"
+
+[vm]
+  size = "shared-cpu-1x"
+  memory = "256mb"

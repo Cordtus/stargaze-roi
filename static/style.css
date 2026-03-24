@@ -1,0 +1,272 @@
+/* Stargaze ROI Tracker Styles */
+
+:root {
+	--bg-primary: #0a0a0f;
+	--bg-secondary: #12121a;
+	--bg-tertiary: #1a1a25;
+	--text-primary: #e5e5e5;
+	--text-secondary: #a0a0a0;
+	--text-muted: #666;
+	--accent: #6366f1;
+	--accent-light: #818cf8;
+	--progress-bg: #1e1e2e;
+	--progress-fill: linear-gradient(90deg, #6366f1, #a855f7);
+	--border: #2a2a3a;
+	--success: #10b981;
+	--warning: #f59e0b;
+}
+
+* {
+	margin: 0;
+	padding: 0;
+	box-sizing: border-box;
+}
+
+body {
+	font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+	background: var(--bg-primary);
+	color: var(--text-primary);
+	min-height: 100vh;
+	line-height: 1.6;
+}
+
+.container {
+	max-width: 800px;
+	margin: 0 auto;
+	padding: 2rem 1rem;
+}
+
+header {
+	text-align: center;
+	margin-bottom: 3rem;
+}
+
+h1 {
+	font-size: 2.5rem;
+	font-weight: 700;
+	margin-bottom: 0.5rem;
+	background: linear-gradient(135deg, var(--accent), var(--accent-light));
+	-webkit-background-clip: text;
+	-webkit-text-fill-color: transparent;
+	background-clip: text;
+}
+
+.subtitle {
+	color: var(--text-secondary);
+	font-size: 1.1rem;
+}
+
+main {
+	display: flex;
+	flex-direction: column;
+	gap: 2rem;
+}
+
+/* Progress Section */
+.progress-section {
+	background: var(--bg-secondary);
+	border-radius: 16px;
+	padding: 2rem;
+	border: 1px solid var(--border);
+}
+
+.target-label {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	margin-bottom: 1rem;
+}
+
+.target-label .label {
+	color: var(--text-secondary);
+	font-size: 0.9rem;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+
+.target-label .value {
+	font-size: 1.5rem;
+	font-weight: 600;
+	color: var(--text-primary);
+}
+
+.progress-container {
+	background: var(--progress-bg);
+	border-radius: 12px;
+	height: 48px;
+	overflow: hidden;
+	position: relative;
+	margin-bottom: 1.5rem;
+}
+
+.progress-bar {
+	height: 100%;
+	background: var(--progress-fill);
+	border-radius: 12px;
+	min-width: 60px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	transition: width 0.5s ease-out;
+	position: relative;
+}
+
+.progress-text {
+	color: white;
+	font-weight: 600;
+	font-size: 0.9rem;
+	text-shadow: 0 1px 2px rgba(0,0,0,0.3);
+	white-space: nowrap;
+}
+
+.stats-row {
+	display: grid;
+	grid-template-columns: repeat(4, 1fr);
+	gap: 1rem;
+}
+
+.stat {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	text-align: center;
+	padding: 1rem;
+	background: var(--bg-tertiary);
+	border-radius: 12px;
+}
+
+.stat .label {
+	color: var(--text-secondary);
+	font-size: 0.75rem;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+	margin-bottom: 0.5rem;
+}
+
+.stat .value {
+	font-size: 1rem;
+	font-weight: 600;
+	color: var(--accent-light);
+	word-break: break-all;
+}
+
+/* Details Section */
+.details-section {
+	background: var(--bg-secondary);
+	border-radius: 16px;
+	padding: 1.5rem;
+	border: 1px solid var(--border);
+}
+
+.detail-row {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	padding: 0.75rem 0;
+	border-bottom: 1px solid var(--border);
+}
+
+.detail-row:last-child {
+	border-bottom: none;
+}
+
+.detail-row .label {
+	color: var(--text-secondary);
+	font-size: 0.9rem;
+}
+
+.detail-row .value {
+	font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+	font-size: 0.85rem;
+	color: var(--text-primary);
+}
+
+/* Update Info */
+.update-info {
+	display: flex;
+	justify-content: space-between;
+	font-size: 0.8rem;
+	color: var(--text-muted);
+	padding: 0 0.5rem;
+}
+
+/* Footer */
+footer {
+	text-align: center;
+	margin-top: 3rem;
+	padding-top: 2rem;
+	border-top: 1px solid var(--border);
+	color: var(--text-muted);
+	font-size: 0.85rem;
+}
+
+footer a {
+	color: var(--accent);
+	text-decoration: none;
+}
+
+footer a:hover {
+	text-decoration: underline;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+	.stats-row {
+		grid-template-columns: repeat(2, 1fr);
+	}
+}
+
+@media (max-width: 600px) {
+	h1 {
+		font-size: 1.75rem;
+	}
+
+	.subtitle {
+		font-size: 0.95rem;
+	}
+
+	.stats-row {
+		grid-template-columns: 1fr;
+	}
+
+	.progress-section,
+	.details-section {
+		padding: 1.25rem;
+	}
+
+	.target-label .value {
+		font-size: 1.25rem;
+	}
+
+	.update-info {
+		flex-direction: column;
+		gap: 0.25rem;
+		text-align: center;
+	}
+}
+
+/* Animation for the progress bar glow effect */
+.progress-bar::after {
+	content: '';
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	bottom: 0;
+	background: linear-gradient(
+		90deg,
+		transparent 0%,
+		rgba(255,255,255,0.1) 50%,
+		transparent 100%
+	);
+	animation: shimmer 2s infinite;
+}
+
+@keyframes shimmer {
+	0% {
+		transform: translateX(-100%);
+	}
+	100% {
+		transform: translateX(100%);
+	}
+}

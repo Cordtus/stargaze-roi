@@ -1,0 +1,45 @@
+# Binaries
+bin/
+tracker
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool
+*.out
+
+# Data directory (SQLite database)
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Air (live reload)
+tmp/
+.air.toml
+
+# Environment files
+.env
+.env.local
+*.env
+
+# Internal documentation
+.claude/
+PROJECT_BLUEPRINT.md
+IMPLEMENTATION_PLAN.md
+DATA_PLAN.md
