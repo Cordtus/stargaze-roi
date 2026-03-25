@@ -31,7 +31,8 @@ type Stats struct {
 	TotalUatomBurned   decimal.Decimal
 	TotalUSDBurned     decimal.Decimal
 	TransactionCount   int64
-	AvgAtomPriceUSD    decimal.Decimal // Volume-weighted average price across all burns
+	PricedTxCount      int64           // Txs that have a non-zero historical price
+	AvgAtomPriceUSD    decimal.Decimal // Volume-weighted average price across priced burns
 	FirstBurnTimestamp *time.Time
 	LastBurnTimestamp  *time.Time
 	LastUpdated        time.Time
@@ -92,13 +93,15 @@ func GetStats(ctx context.Context, pool *pgxpool.Pool) (Stats, error) {
 	stats.FirstBurnTimestamp = firstBurn
 	stats.LastBurnTimestamp = lastBurn
 
-	// Calculate volume-weighted average ATOM price from processed burns
-	// VWAP = SUM(price * amount) / SUM(amount)
+	// Count txs with historical prices filled in and calculate VWAP from those
 	var avgPriceStr *string
 	err = pool.QueryRow(ctx, `
-		SELECT (SUM(atom_price_usd * uatom_amount) / NULLIF(SUM(uatom_amount), 0))::TEXT
+		SELECT
+			COUNT(*),
+			(SUM(atom_price_usd * uatom_amount) / NULLIF(SUM(uatom_amount), 0))::TEXT
 		FROM roi_tracker.processed_burns
-	`).Scan(&avgPriceStr)
+		WHERE atom_price_usd > 0
+	`).Scan(&stats.PricedTxCount, &avgPriceStr)
 	if err == nil && avgPriceStr != nil {
 		stats.AvgAtomPriceUSD, _ = decimal.NewFromString(*avgPriceStr)
 	}

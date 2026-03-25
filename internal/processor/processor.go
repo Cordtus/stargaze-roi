@@ -150,7 +150,6 @@ func (p *Processor) processNewTxs(ctx context.Context) error {
 
 	var processedCount int
 	var dbErrCount int
-	var lastKnownPrice decimal.Decimal
 
 	for _, tx := range seen {
 		if tx.FeeUatom <= 0 {
@@ -164,21 +163,11 @@ func (p *Processor) processNewTxs(ctx context.Context) error {
 			timestamp = time.Now()
 		}
 
+		// Try to get price from cache; if unavailable, insert with zero (backfill later)
 		atomPrice, err := p.priceFetcher.GetPrice(ctx, timestamp)
 		if err != nil {
-			atomPrice, err = p.priceFetcher.GetCurrentPrice(ctx)
-			if err != nil {
-				// Use last known price as final fallback (price will be corrected later)
-				if lastKnownPrice.IsZero() {
-					p.logger.Warn("no price available, skipping tx (will retry)",
-						"tx_hash", tx.TxHash, "error", err)
-					continue
-				}
-				p.logger.Debug("using last known price as fallback", "tx_hash", tx.TxHash)
-				atomPrice = lastKnownPrice
-			}
+			atomPrice = decimal.Zero
 		}
-		lastKnownPrice = atomPrice
 
 		usdValue := price.CalculateUSD(feeUatom, atomPrice)
 

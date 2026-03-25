@@ -54,15 +54,18 @@ func NewFetcher(apiBase, apiKey string, rateLimitPerMin int, pool *pgxpool.Pool,
 }
 
 // GetPrice returns the ATOM price in USD for the given timestamp.
-// Uses caching at 1-minute granularity to minimize API calls.
+// Checks cache at minute granularity first, then falls back to day-level cache (from backfill).
 func (f *Fetcher) GetPrice(ctx context.Context, timestamp time.Time) (decimal.Decimal, error) {
-	// Round to minute for cache key
 	minute := timestamp.UTC().Truncate(time.Minute)
+	day := timestamp.UTC().Truncate(24 * time.Hour)
 
-	// Check cache first
-	if price, found, err := db.GetCachedPrice(ctx, f.pool, minute); err != nil {
-		f.logger.Warn("price cache lookup failed", "error", err, "minute", minute)
-	} else if found {
+	// Check minute-level cache first
+	if price, found, err := db.GetCachedPrice(ctx, f.pool, minute); err == nil && found {
+		return price, nil
+	}
+
+	// Check day-level cache (populated by backfill)
+	if price, found, err := db.GetCachedPrice(ctx, f.pool, day); err == nil && found {
 		return price, nil
 	}
 
@@ -72,9 +75,9 @@ func (f *Fetcher) GetPrice(ctx context.Context, timestamp time.Time) (decimal.De
 		return decimal.Zero, err
 	}
 
-	// Cache the result
-	if err := db.CachePrice(ctx, f.pool, minute, price); err != nil {
-		f.logger.Warn("failed to cache price", "error", err, "minute", minute)
+	// Cache at day level (CoinGecko historical only has daily granularity)
+	if err := db.CachePrice(ctx, f.pool, day, price); err != nil {
+		f.logger.Warn("failed to cache price", "error", err, "day", day)
 	}
 
 	return price, nil

@@ -30,8 +30,14 @@
 
 				<div class="stats-row">
 					<div class="stat">
-						<span class="label">Fee Revenue (USD)</span>
-						<span class="value" id="fees-usd">$0.00</span>
+						<span class="label">Fee Revenue (current value)</span>
+						<span class="value" id="fees-usd-current">-</span>
+						<span class="note" id="current-price-note"></span>
+					</div>
+					<div class="stat">
+						<span class="label">Fee Revenue (at time of tx)</span>
+						<span class="value" id="fees-usd-hist">-</span>
+						<span class="note" id="hist-price-note"></span>
 					</div>
 					<div class="stat">
 						<span class="label">Fee Revenue (ATOM)</span>
@@ -74,7 +80,7 @@
 					<span class="value" id="last-tx">-</span>
 				</div>
 				<div class="detail-row">
-					<span class="label">Last Processed Event</span>
+					<span class="label">Last Processed Height</span>
 					<span class="value" id="synced-height">-</span>
 				</div>
 				<div class="detail-row">
@@ -117,9 +123,33 @@
 			document.getElementById('progress-text').textContent = `${pct.toFixed(4)}%`;
 
 			document.getElementById('target-amount').textContent = formatUSD(s.target_usd);
-			document.getElementById('fees-usd').textContent = formatUSD(s.total_fees_usd, 10);
+
+			// Current value: total ATOM * current ATOM price
+			const currentUSD = num(s.total_fees_usd_current);
+			document.getElementById('fees-usd-current').textContent = currentUSD > 0 ? formatUSD(s.total_fees_usd_current) : '-';
+			if (s.current_atom_price_usd) {
+				document.getElementById('current-price-note').textContent =
+					`at ${formatUSD(s.current_atom_price_usd, 4)}/ATOM`;
+			}
+
+			// Historical value: sum of each tx's fee * ATOM price at time of tx
+			const histUSD = num(s.total_fees_usd_historical);
+			const pricedCount = s.priced_tx_count || 0;
+			const totalCount = s.transaction_count || 0;
+			if (histUSD > 0) {
+				document.getElementById('fees-usd-hist').textContent = formatUSD(s.total_fees_usd_historical);
+			} else {
+				document.getElementById('fees-usd-hist').textContent = '-';
+			}
+			if (pricedCount < totalCount) {
+				document.getElementById('hist-price-note').textContent =
+					`${pricedCount.toLocaleString()} of ${totalCount.toLocaleString()} txs priced -- updating as historical prices are fetched`;
+			} else if (totalCount > 0) {
+				document.getElementById('hist-price-note').textContent = 'all txs priced';
+			}
+
 			document.getElementById('fees-atom').textContent = `${num(s.total_fees_atom).toFixed(6)} ATOM`;
-			document.getElementById('tx-count').textContent = (s.transaction_count || 0).toLocaleString();
+			document.getElementById('tx-count').textContent = totalCount.toLocaleString();
 			document.getElementById('progress-percent').textContent = `${num(s.progress_percent).toFixed(10)}%`;
 			document.getElementById('avg-atom-price').textContent = formatUSD(s.avg_atom_price_usd, 6);
 

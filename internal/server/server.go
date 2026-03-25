@@ -112,23 +112,26 @@ func (w *responseWriter) WriteHeader(code int) {
 
 // StatsResponse is the response for the /api/stats endpoint.
 type StatsResponse struct {
-	TargetUSD        string   `json:"target_usd"`
-	GrantAtom        string   `json:"grant_atom,omitempty"`
-	GrantPriceUSD    string   `json:"grant_price_usd,omitempty"`
-	TotalFeesUSD     string   `json:"total_fees_usd"`
-	TotalFeesAtom    string   `json:"total_fees_atom"`
-	TransactionCount int64    `json:"transaction_count"`
-	ProgressPercent  string   `json:"progress_percent"`
-	AvgAtomPriceUSD  string   `json:"avg_atom_price_usd"`
-	YearsToBreakeven *float64 `json:"years_to_breakeven"`
-	FirstTxTimestamp *string  `json:"first_tx_timestamp,omitempty"`
-	LastTxTimestamp  *string  `json:"last_tx_timestamp,omitempty"`
-	UpdatedAt        string   `json:"updated_at"`
-	LastProcessedID  int64    `json:"last_processed_event_id"`
-	ContractInfo     string   `json:"contract_info,omitempty"`
-	ChainID          string   `json:"chain_id"`
-	ProposalID       int      `json:"proposal_id,omitempty"`
-	MultisigAddress  string   `json:"multisig_address,omitempty"`
+	TargetUSD            string   `json:"target_usd"`
+	GrantAtom            string   `json:"grant_atom,omitempty"`
+	GrantPriceUSD        string   `json:"grant_price_usd,omitempty"`
+	TotalFeesUSDCurrent  string   `json:"total_fees_usd_current"`
+	TotalFeesUSDHist     string   `json:"total_fees_usd_historical"`
+	TotalFeesAtom        string   `json:"total_fees_atom"`
+	TransactionCount     int64    `json:"transaction_count"`
+	PricedTxCount        int64    `json:"priced_tx_count"`
+	ProgressPercent      string   `json:"progress_percent"`
+	AvgAtomPriceUSD      string   `json:"avg_atom_price_usd"`
+	CurrentAtomPriceUSD  string   `json:"current_atom_price_usd,omitempty"`
+	YearsToBreakeven     *float64 `json:"years_to_breakeven"`
+	FirstTxTimestamp     *string  `json:"first_tx_timestamp,omitempty"`
+	LastTxTimestamp       *string `json:"last_tx_timestamp,omitempty"`
+	UpdatedAt            string   `json:"updated_at"`
+	LastProcessedID      int64    `json:"last_processed_event_id"`
+	ContractInfo         string   `json:"contract_info,omitempty"`
+	ChainID              string   `json:"chain_id"`
+	ProposalID           int      `json:"proposal_id,omitempty"`
+	MultisigAddress      string   `json:"multisig_address,omitempty"`
 }
 
 // handleStats returns the current fee revenue statistics.
@@ -142,30 +145,50 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 	target := s.cfg.TargetUSD()
 
-	// Calculate progress percentage with high precision
-	var progressPercent decimal.Decimal
-	if target.GreaterThan(decimal.Zero) {
-		progressPercent = stats.TotalUSDBurned.Div(target).Mul(decimal.NewFromInt(100))
-	}
-
 	// Convert uatom to ATOM for display
 	totalAtom := stats.TotalUatomBurned.Div(decimal.NewFromInt(1_000_000))
 
+	// Current-price valuation: total ATOM fees * latest cached price
+	var currentPriceUSD decimal.Decimal
+	var currentValuation decimal.Decimal
+	now := time.Now().UTC().Truncate(24 * time.Hour)
+	if price, found, err := db.GetCachedPrice(r.Context(), s.pool, now); err == nil && found {
+		currentPriceUSD = price
+		currentValuation = totalAtom.Mul(price)
+	}
+
+	// Use current valuation for progress if historical isn't available yet
+	progressValue := stats.TotalUSDBurned
+	if progressValue.IsZero() && currentValuation.GreaterThan(decimal.Zero) {
+		progressValue = currentValuation
+	}
+
+	var progressPercent decimal.Decimal
+	if target.GreaterThan(decimal.Zero) && progressValue.GreaterThan(decimal.Zero) {
+		progressPercent = progressValue.Div(target).Mul(decimal.NewFromInt(100))
+	}
+
 	resp := StatsResponse{
-		TargetUSD:        target.StringFixed(2),
-		GrantAtom:        s.cfg.GrantAtom().StringFixed(6),
-		GrantPriceUSD:    s.cfg.Target.GrantPriceUSD,
-		TotalFeesUSD:     stats.TotalUSDBurned.StringFixed(10),
-		TotalFeesAtom:    totalAtom.StringFixed(6),
-		TransactionCount: stats.TransactionCount,
-		ProgressPercent:  progressPercent.StringFixed(10),
-		AvgAtomPriceUSD:  stats.AvgAtomPriceUSD.StringFixed(6),
-		UpdatedAt:        stats.LastUpdated.Format(time.RFC3339),
-		LastProcessedID:  stats.LastProcessedID,
-		ContractInfo:     stats.ContractAddress,
-		ChainID:          stats.ChainID,
-		ProposalID:       s.cfg.Target.ProposalID,
-		MultisigAddress:  s.cfg.Target.MultisigAddress,
+		TargetUSD:           target.StringFixed(2),
+		GrantAtom:           s.cfg.GrantAtom().StringFixed(6),
+		GrantPriceUSD:       s.cfg.Target.GrantPriceUSD,
+		TotalFeesUSDCurrent: currentValuation.StringFixed(2),
+		TotalFeesUSDHist:    stats.TotalUSDBurned.StringFixed(2),
+		TotalFeesAtom:       totalAtom.StringFixed(6),
+		TransactionCount:    stats.TransactionCount,
+		PricedTxCount:       stats.PricedTxCount,
+		ProgressPercent:     progressPercent.StringFixed(10),
+		AvgAtomPriceUSD:     stats.AvgAtomPriceUSD.StringFixed(6),
+		UpdatedAt:           stats.LastUpdated.Format(time.RFC3339),
+		LastProcessedID:     stats.LastProcessedID,
+		ContractInfo:        stats.ContractAddress,
+		ChainID:             stats.ChainID,
+		ProposalID:          s.cfg.Target.ProposalID,
+		MultisigAddress:     s.cfg.Target.MultisigAddress,
+	}
+
+	if currentPriceUSD.GreaterThan(decimal.Zero) {
+		resp.CurrentAtomPriceUSD = currentPriceUSD.StringFixed(6)
 	}
 
 	if stats.FirstBurnTimestamp != nil {
@@ -178,12 +201,12 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Calculate years to break even based on daily fee revenue rate
-	if stats.FirstBurnTimestamp != nil && stats.TotalUSDBurned.GreaterThan(decimal.Zero) {
+	if stats.FirstBurnTimestamp != nil && progressValue.GreaterThan(decimal.Zero) {
 		daysSinceFirst := time.Since(*stats.FirstBurnTimestamp).Hours() / 24
 		if daysSinceFirst > 0 {
-			dailyRate, _ := stats.TotalUSDBurned.Div(decimal.NewFromFloat(daysSinceFirst)).Float64()
+			dailyRate, _ := progressValue.Div(decimal.NewFromFloat(daysSinceFirst)).Float64()
 			if dailyRate > 0 {
-				remaining, _ := target.Sub(stats.TotalUSDBurned).Float64()
+				remaining, _ := target.Sub(progressValue).Float64()
 				years := remaining / (dailyRate * 365.25)
 				resp.YearsToBreakeven = &years
 			}
