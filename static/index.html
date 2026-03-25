@@ -28,37 +28,53 @@
 					</div>
 				</div>
 
-				<div class="stats-row">
-					<div class="stat">
-						<span class="label">Fee Revenue (current value)</span>
-						<span class="value" id="fees-usd-current">-</span>
-						<span class="note" id="current-price-note"></span>
+				<div class="tabs">
+					<button class="tab active" data-tab="overview">Overview</button>
+					<button class="tab" data-tab="by-action">By Action</button>
+					<button class="tab" data-tab="by-contract">By Contract</button>
+				</div>
+
+				<div class="tab-content active" id="tab-overview">
+					<div class="stats-row">
+						<div class="stat">
+							<span class="label">Fee Revenue (current value)</span>
+							<span class="value" id="fees-usd-current">-</span>
+							<span class="note" id="current-price-note"></span>
+						</div>
+						<div class="stat">
+							<span class="label">Fee Revenue (at time of tx)</span>
+							<span class="value" id="fees-usd-hist">-</span>
+							<span class="note" id="hist-price-note"></span>
+						</div>
+						<div class="stat">
+							<span class="label">Fee Revenue (ATOM)</span>
+							<span class="value" id="fees-atom">0.000000</span>
+						</div>
+						<div class="stat">
+							<span class="label">Transactions</span>
+							<span class="value" id="tx-count">0</span>
+						</div>
+						<div class="stat">
+							<span class="label">Grant (ATOM)</span>
+							<span class="value" id="grant-atom">-</span>
+						</div>
+						<div class="stat">
+							<span class="label">ATOM Price at Grant</span>
+							<span class="value" id="grant-price">-</span>
+						</div>
+						<div class="stat">
+							<span class="label">Avg ATOM Price (VWAP)</span>
+							<span class="value" id="avg-atom-price">$0.00</span>
+						</div>
 					</div>
-					<div class="stat">
-						<span class="label">Fee Revenue (at time of tx)</span>
-						<span class="value" id="fees-usd-hist">-</span>
-						<span class="note" id="hist-price-note"></span>
-					</div>
-					<div class="stat">
-						<span class="label">Fee Revenue (ATOM)</span>
-						<span class="value" id="fees-atom">0.000000</span>
-					</div>
-					<div class="stat">
-						<span class="label">Transactions</span>
-						<span class="value" id="tx-count">0</span>
-					</div>
-					<div class="stat">
-						<span class="label">Grant (ATOM)</span>
-						<span class="value" id="grant-atom">-</span>
-					</div>
-					<div class="stat">
-						<span class="label">ATOM Price at Grant</span>
-						<span class="value" id="grant-price">-</span>
-					</div>
-					<div class="stat">
-						<span class="label">Avg ATOM Price (VWAP)</span>
-						<span class="value" id="avg-atom-price">$0.00</span>
-					</div>
+				</div>
+
+				<div class="tab-content" id="tab-by-action">
+					<div class="breakdown-list" id="breakdown-actions"><p class="loading-text">Loading...</p></div>
+				</div>
+
+				<div class="tab-content" id="tab-by-contract">
+					<div class="breakdown-list" id="breakdown-contracts"><p class="loading-text">Loading...</p></div>
 				</div>
 			</div>
 
@@ -89,17 +105,6 @@
 				</div>
 			</div>
 
-			<div class="breakdown-section" id="breakdown-section" style="display:none">
-				<details>
-					<summary>Revenue by Action</summary>
-					<div class="breakdown-list" id="breakdown-actions"></div>
-				</details>
-				<details>
-					<summary>Revenue by Contract</summary>
-					<div class="breakdown-list" id="breakdown-contracts"></div>
-				</details>
-			</div>
-
 			<div class="update-info">
 				<span id="data-updated">Data updated: -</span>
 				<span id="page-loaded">-</span>
@@ -112,11 +117,19 @@
 	</div>
 
 	<script>
-		const API_URL = '/api/stats';
+		// Tab switching
+		document.querySelectorAll('.tab').forEach(btn => {
+			btn.addEventListener('click', () => {
+				document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+				document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+				btn.classList.add('active');
+				document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+			});
+		});
 
 		async function loadStats() {
 			try {
-				const response = await fetch(API_URL);
+				const response = await fetch('/api/stats');
 				if (!response.ok) throw new Error(`HTTP ${response.status}`);
 				const data = await response.json();
 				displayStats(data);
@@ -135,7 +148,6 @@
 
 			document.getElementById('target-amount').textContent = formatUSD(s.target_usd);
 
-			// Current value: total ATOM * current ATOM price
 			const currentUSD = num(s.total_fees_usd_current);
 			document.getElementById('fees-usd-current').textContent = currentUSD > 0 ? formatUSD(s.total_fees_usd_current) : '-';
 			if (s.current_atom_price_usd) {
@@ -143,18 +155,13 @@
 					`at ${formatUSD(s.current_atom_price_usd, 4)}/ATOM`;
 			}
 
-			// Historical value: sum of each tx's fee * ATOM price at time of tx
 			const histUSD = num(s.total_fees_usd_historical);
 			const pricedCount = s.priced_tx_count || 0;
 			const totalCount = s.transaction_count || 0;
-			if (histUSD > 0) {
-				document.getElementById('fees-usd-hist').textContent = formatUSD(s.total_fees_usd_historical);
-			} else {
-				document.getElementById('fees-usd-hist').textContent = '-';
-			}
+			document.getElementById('fees-usd-hist').textContent = histUSD > 0 ? formatUSD(s.total_fees_usd_historical) : '-';
 			if (pricedCount < totalCount) {
 				document.getElementById('hist-price-note').textContent =
-					`${pricedCount.toLocaleString()} of ${totalCount.toLocaleString()} txs priced -- updating as historical prices are fetched`;
+					`${pricedCount.toLocaleString()} of ${totalCount.toLocaleString()} txs priced`;
 			} else if (totalCount > 0) {
 				document.getElementById('hist-price-note').textContent = 'all txs priced';
 			}
@@ -192,6 +199,29 @@
 			document.getElementById('page-loaded').textContent = `Loaded: ${new Date().toLocaleString()}`;
 		}
 
+		async function loadBreakdown() {
+			try {
+				const resp = await fetch('/api/breakdown');
+				if (!resp.ok) return;
+				const data = await resp.json();
+				renderBreakdown('breakdown-actions', data.by_action);
+				renderBreakdown('breakdown-contracts', data.by_contract);
+			} catch (e) {
+				console.error('Failed to load breakdown:', e);
+			}
+		}
+
+		function renderBreakdown(containerId, items) {
+			const el = document.getElementById(containerId);
+			if (!items || !items.length) { el.innerHTML = '<p class="loading-text">No data yet</p>'; return; }
+			el.innerHTML = items.map(item =>
+				`<div class="breakdown-item">
+					<span class="breakdown-label">${item.label}</span>
+					<span class="breakdown-value">${item.txs.toLocaleString()} txs / ${parseFloat(item.atom).toFixed(6)} ATOM</span>
+				</div>`
+			).join('');
+		}
+
 		function formatUSD(value, decimals = 2) {
 			const v = num(value);
 			if (v < 0.01 && v > 0) return `$${v.toFixed(Math.min(decimals, 10))}`;
@@ -202,38 +232,13 @@
 			return new Date(iso).toLocaleString();
 		}
 
-		async function loadBreakdown() {
-			try {
-				const resp = await fetch('/api/breakdown');
-				if (!resp.ok) return;
-				const data = await resp.json();
-				renderBreakdown('breakdown-actions', data.by_action);
-				renderBreakdown('breakdown-contracts', data.by_contract);
-				document.getElementById('breakdown-section').style.display = '';
-			} catch (e) {
-				console.error('Failed to load breakdown:', e);
-			}
-		}
-
-		function renderBreakdown(containerId, items) {
-			const el = document.getElementById(containerId);
-			if (!items || !items.length) { el.innerHTML = '<p>No data</p>'; return; }
-			el.innerHTML = items.map(item =>
-				`<div class="breakdown-item">
-					<span class="breakdown-label">${item.label}</span>
-					<span class="breakdown-value">${item.txs.toLocaleString()} txs / ${parseFloat(item.atom).toFixed(6)} ATOM</span>
-				</div>`
-			).join('');
-		}
-
 		loadStats();
 		loadBreakdown();
-		// Auto-refresh every 30 seconds
 		setInterval(loadStats, 30000);
 		setInterval(loadBreakdown, 30000);
 
 		document.addEventListener('visibilitychange', () => {
-			if (document.visibilityState === 'visible') loadStats();
+			if (document.visibilityState === 'visible') { loadStats(); loadBreakdown(); }
 		});
 	</script>
 </body>

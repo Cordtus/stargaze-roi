@@ -81,6 +81,8 @@ func (s *Server) withMiddleware(next http.Handler) http.Handler {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		// Prevent caching of static files during development
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 
 		if r.Method == "OPTIONS" {
 			w.WriteHeader(http.StatusOK)
