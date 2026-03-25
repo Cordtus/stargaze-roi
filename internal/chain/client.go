@@ -106,20 +106,44 @@ type pagination struct {
 
 // QueryContractTxs queries the chain for transactions involving the given contract
 // after the given height. Returns transactions sorted ascending by height.
-// Uses nextKey pagination first; if the node caps results (empty nextKey but full page),
-// falls back to height-based re-querying to drain all results.
+// Queries both wasm._contract_address and execute._contract_address to catch all event prefixes.
 func (c *Client) QueryContractTxs(ctx context.Context, contractAddr string, afterHeight int64, limit int) ([]ContractTx, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 
+	// Query both event key prefixes -- some chains index under wasm.*, others under execute.*
+	prefixes := []string{"wasm._contract_address", "execute._contract_address"}
+
 	var allTxs []ContractTx
+	seen := map[string]bool{}
+
+	for _, prefix := range prefixes {
+		txs, err := c.queryByPrefix(ctx, prefix, contractAddr, afterHeight, limit)
+		if err != nil {
+			c.logger.Warn("query failed for prefix", "prefix", prefix, "error", err)
+			continue
+		}
+		for _, tx := range txs {
+			if !seen[tx.TxHash] {
+				seen[tx.TxHash] = true
+				allTxs = append(allTxs, tx)
+			}
+		}
+	}
+
+	return allTxs, nil
+}
+
+// queryByPrefix runs a paginated GetTxsEvent query for a single event prefix.
+func (c *Client) queryByPrefix(ctx context.Context, prefix, contractAddr string, afterHeight int64, limit int) ([]ContractTx, error) {
+	var txs []ContractTx
 	seen := map[string]bool{}
 	var pageKey string
 	cursor := afterHeight
 
 	for {
-		query := fmt.Sprintf("wasm._contract_address='%s' AND tx.height>%d", contractAddr, cursor)
+		query := fmt.Sprintf("%s='%s' AND tx.height>%d", prefix, contractAddr, cursor)
 
 		params := map[string]any{
 			"query":    query,
@@ -144,12 +168,12 @@ func (c *Client) QueryContractTxs(ctx context.Context, contractAddr string, afte
 			return nil, fmt.Errorf("parsing response: %w", err)
 		}
 
-		txs := c.extractContractTxs(result.TxResponses, contractAddr)
+		parsed := c.extractContractTxs(result.TxResponses, contractAddr)
 		var maxHeight int64
-		for _, tx := range txs {
+		for _, tx := range parsed {
 			if !seen[tx.TxHash] {
 				seen[tx.TxHash] = true
-				allTxs = append(allTxs, tx)
+				txs = append(txs, tx)
 			}
 			if tx.Height > maxHeight {
 				maxHeight = tx.Height
@@ -168,7 +192,7 @@ func (c *Client) QueryContractTxs(ctx context.Context, contractAddr string, afte
 			c.logger.Debug("page full with no nextKey, advancing height cursor",
 				"contract", contractAddr[:20]+"...",
 				"cursor", cursor, "new_cursor", maxHeight,
-				"collected", len(allTxs),
+				"collected", len(txs),
 			)
 			cursor = maxHeight
 			pageKey = ""
@@ -178,7 +202,7 @@ func (c *Client) QueryContractTxs(ctx context.Context, contractAddr string, afte
 		break
 	}
 
-	return allTxs, nil
+	return txs, nil
 }
 
 // extractContractTxs parses transaction responses into ContractTx structs.
