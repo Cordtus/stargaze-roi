@@ -252,6 +252,11 @@ func (c *Client) extractContractTxs(txResponses []txResponse, contractAddr strin
 						ct.Action = a.Value
 					}
 				}
+			default:
+				// Custom wasm event types: wasm-set-ask, wasm-finalize-sale, etc.
+				if ct.Action == "" && strings.HasPrefix(evt.Type, "wasm-") {
+					ct.Action = strings.TrimPrefix(evt.Type, "wasm-")
+				}
 			}
 		}
 

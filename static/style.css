@@ -190,6 +190,65 @@ main {
 	color: var(--text-primary);
 }
 
+/* Breakdown Section */
+.breakdown-section {
+	display: flex;
+	flex-direction: column;
+	gap: 0.5rem;
+}
+
+.breakdown-section details {
+	background: var(--bg-secondary);
+	border-radius: 12px;
+	border: 1px solid var(--border);
+	overflow: hidden;
+}
+
+.breakdown-section summary {
+	padding: 1rem 1.25rem;
+	cursor: pointer;
+	color: var(--text-secondary);
+	font-size: 0.9rem;
+	text-transform: uppercase;
+	letter-spacing: 0.03em;
+	user-select: none;
+}
+
+.breakdown-section summary:hover {
+	color: var(--text-primary);
+}
+
+.breakdown-list {
+	padding: 0 1.25rem 1rem;
+}
+
+.breakdown-item {
+	display: flex;
+	justify-content: space-between;
+	padding: 0.5rem 0;
+	border-bottom: 1px solid var(--border);
+	font-size: 0.85rem;
+}
+
+.breakdown-item:last-child {
+	border-bottom: none;
+}
+
+.breakdown-label {
+	color: var(--text-primary);
+	max-width: 60%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.breakdown-value {
+	color: var(--accent-light);
+	font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+	font-size: 0.8rem;
+	white-space: nowrap;
+}
+
 /* Update Info */
 .update-info {
 	display: flex;

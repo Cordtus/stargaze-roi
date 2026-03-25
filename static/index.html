@@ -89,6 +89,17 @@
 				</div>
 			</div>
 
+			<div class="breakdown-section" id="breakdown-section" style="display:none">
+				<details>
+					<summary>Revenue by Action</summary>
+					<div class="breakdown-list" id="breakdown-actions"></div>
+				</details>
+				<details>
+					<summary>Revenue by Contract</summary>
+					<div class="breakdown-list" id="breakdown-contracts"></div>
+				</details>
+			</div>
+
 			<div class="update-info">
 				<span id="data-updated">Data updated: -</span>
 				<span id="page-loaded">-</span>
@@ -191,9 +202,35 @@
 			return new Date(iso).toLocaleString();
 		}
 
+		async function loadBreakdown() {
+			try {
+				const resp = await fetch('/api/breakdown');
+				if (!resp.ok) return;
+				const data = await resp.json();
+				renderBreakdown('breakdown-actions', data.by_action);
+				renderBreakdown('breakdown-contracts', data.by_contract);
+				document.getElementById('breakdown-section').style.display = '';
+			} catch (e) {
+				console.error('Failed to load breakdown:', e);
+			}
+		}
+
+		function renderBreakdown(containerId, items) {
+			const el = document.getElementById(containerId);
+			if (!items || !items.length) { el.innerHTML = '<p>No data</p>'; return; }
+			el.innerHTML = items.map(item =>
+				`<div class="breakdown-item">
+					<span class="breakdown-label">${item.label}</span>
+					<span class="breakdown-value">${item.txs.toLocaleString()} txs / ${parseFloat(item.atom).toFixed(6)} ATOM</span>
+				</div>`
+			).join('');
+		}
+
 		loadStats();
+		loadBreakdown();
 		// Auto-refresh every 30 seconds
 		setInterval(loadStats, 30000);
+		setInterval(loadBreakdown, 30000);
 
 		document.addEventListener('visibilitychange', () => {
 			if (document.visibilityState === 'visible') loadStats();

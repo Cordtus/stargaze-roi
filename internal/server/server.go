@@ -38,6 +38,7 @@ func New(cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger, staticFS f
 
 	// API routes
 	mux.HandleFunc("GET /api/stats", s.handleStats)
+	mux.HandleFunc("GET /api/breakdown", s.handleBreakdown)
 	mux.HandleFunc("GET /api/transactions", s.handleTransactions)
 	mux.HandleFunc("GET /health", s.handleHealth)
 	mux.HandleFunc("GET /api/health", s.handleHealth)
@@ -282,6 +283,64 @@ func (s *Server) handleTransactions(w http.ResponseWriter, r *http.Request) {
 			Action:       b.Action,
 			Contract:     b.Contract,
 		})
+	}
+
+	s.writeJSON(w, resp)
+}
+
+// BreakdownItem represents one row in the action or contract breakdown.
+type BreakdownItem struct {
+	Label string `json:"label"`
+	Txs   int64  `json:"txs"`
+	Atom  string `json:"atom"`
+}
+
+// BreakdownResponse is the response for /api/breakdown.
+type BreakdownResponse struct {
+	ByAction   []BreakdownItem `json:"by_action"`
+	ByContract []BreakdownItem `json:"by_contract"`
+}
+
+// handleBreakdown returns fee revenue grouped by action and contract.
+func (s *Server) handleBreakdown(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var resp BreakdownResponse
+
+	// By action
+	rows, err := s.pool.Query(ctx, `
+		SELECT COALESCE(NULLIF(action, ''), 'unknown'), COUNT(*),
+		       (SUM(uatom_amount)/1000000)::TEXT
+		FROM roi_tracker.processed_burns
+		GROUP BY action ORDER BY SUM(uatom_amount) DESC
+	`)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var item BreakdownItem
+			if err := rows.Scan(&item.Label, &item.Txs, &item.Atom); err == nil {
+				resp.ByAction = append(resp.ByAction, item)
+			}
+		}
+	}
+
+	// By contract (with label from discovered_contracts)
+	rows2, err := s.pool.Query(ctx, `
+		SELECT COALESCE(dc.label, pb.contract), COUNT(*),
+		       (SUM(pb.uatom_amount)/1000000)::TEXT
+		FROM roi_tracker.processed_burns pb
+		LEFT JOIN roi_tracker.discovered_contracts dc ON dc.address = pb.contract
+		GROUP BY COALESCE(dc.label, pb.contract)
+		ORDER BY SUM(pb.uatom_amount) DESC
+	`)
+	if err == nil {
+		defer rows2.Close()
+		for rows2.Next() {
+			var item BreakdownItem
+			if err := rows2.Scan(&item.Label, &item.Txs, &item.Atom); err == nil {
+				resp.ByContract = append(resp.ByContract, item)
+			}
+		}
 	}
 
 	s.writeJSON(w, resp)
