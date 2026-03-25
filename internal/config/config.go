@@ -18,6 +18,8 @@ type Config struct {
 	Target    TargetConfig    `toml:"target"`
 	Server    ServerConfig    `toml:"server"`
 	Database  DatabaseConfig  `toml:"database"`
+	Processor ProcessorConfig `toml:"processor"`
+	Discovery DiscoveryConfig `toml:"discovery"`
 }
 
 // ChainConfig holds Cosmos chain settings.
@@ -28,8 +30,12 @@ type ChainConfig struct {
 
 // ContractConfig holds the target contract addresses to monitor.
 type ContractConfig struct {
-	// Addresses is the list of CosmWasm contract addresses to monitor for fee revenue
+	// Addresses is the list of seed CosmWasm contract addresses (discovery expands from here)
 	Addresses []string `toml:"addresses"`
+	// SkipCodeIDs are code_ids to skip when querying for txs (their txs are captured via parent contracts)
+	SkipCodeIDs []int64 `toml:"skip_code_ids"`
+	// StartHeight is the block height to begin indexing from (0 = from contract creation)
+	StartHeight int64 `toml:"start_height"`
 }
 
 // CoinGeckoConfig holds price API settings.
@@ -52,6 +58,8 @@ type TargetConfig struct {
 	GrantUatomAmount string `toml:"grant_uatom_amount"`
 	// MultisigAddress is the fund management multisig
 	MultisigAddress string `toml:"multisig_address"`
+	// GrantPriceUSD is the ATOM price on the grant date
+	GrantPriceUSD string `toml:"grant_price_usd"`
 }
 
 // ServerConfig holds HTTP server settings.
@@ -65,6 +73,18 @@ type DatabaseConfig struct {
 	// ConnString is the PostgreSQL connection string
 	// e.g., "postgres://user:pass@localhost:5432/dbname"
 	ConnString string `toml:"conn_string"`
+}
+
+// ProcessorConfig holds processor tuning settings.
+type ProcessorConfig struct {
+	// PollSeconds is how often to poll for new transactions (default: 10)
+	PollSeconds int `toml:"poll_seconds"`
+}
+
+// DiscoveryConfig holds contract discovery settings.
+type DiscoveryConfig struct {
+	// RefreshMinutes is how often to re-discover contracts (default: 60, 0 = once at startup)
+	RefreshMinutes int `toml:"refresh_minutes"`
 }
 
 // Load reads and parses the configuration file from the given path.

@@ -10,10 +10,10 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-// BurnTransaction represents a processed burn event with USD value.
+// BurnTransaction represents a processed fee transaction with USD value.
 type BurnTransaction struct {
 	ID           int64
-	WasmEventID  int64
+	WasmEventID  *int64
 	TxHash       string
 	Height       int64
 	Timestamp    time.Time
@@ -21,6 +21,8 @@ type BurnTransaction struct {
 	AtomPriceUSD decimal.Decimal
 	USDValue     decimal.Decimal
 	Sender       string
+	Action       string
+	Contract     string
 	CreatedAt    time.Time
 }
 
@@ -38,11 +40,13 @@ type Stats struct {
 	ChainID            string
 }
 
-// InitSchema initializes the ROI tracker schema in the shared database.
+// InitSchema initializes the ROI tracker schema and runs migrations.
 func InitSchema(ctx context.Context, pool *pgxpool.Pool) error {
-	_, err := pool.Exec(ctx, Schema)
-	if err != nil {
+	if _, err := pool.Exec(ctx, Schema); err != nil {
 		return fmt.Errorf("initializing schema: %w", err)
+	}
+	if _, err := pool.Exec(ctx, Migration); err != nil {
+		return fmt.Errorf("running migration: %w", err)
 	}
 	return nil
 }
@@ -110,9 +114,9 @@ func GetRecentBurns(ctx context.Context, pool *pgxpool.Pool, limit, offset int) 
 	}
 
 	rows, err := pool.Query(ctx, `
-		SELECT id, wasm_event_id, tx_hash, height, timestamp,
+		SELECT id, tx_hash, height, timestamp,
 		       uatom_amount::TEXT, atom_price_usd::TEXT, usd_value::TEXT,
-		       sender, created_at
+		       sender, action, contract, created_at
 		FROM roi_tracker.processed_burns
 		ORDER BY timestamp DESC
 		LIMIT $1 OFFSET $2
@@ -126,15 +130,22 @@ func GetRecentBurns(ctx context.Context, pool *pgxpool.Pool, limit, offset int) 
 	for rows.Next() {
 		var b BurnTransaction
 		var uatom, priceUSD, usdValue string
+		var action, contract *string
 
-		if err := rows.Scan(&b.ID, &b.WasmEventID, &b.TxHash, &b.Height, &b.Timestamp,
-			&uatom, &priceUSD, &usdValue, &b.Sender, &b.CreatedAt); err != nil {
+		if err := rows.Scan(&b.ID, &b.TxHash, &b.Height, &b.Timestamp,
+			&uatom, &priceUSD, &usdValue, &b.Sender, &action, &contract, &b.CreatedAt); err != nil {
 			return nil, 0, fmt.Errorf("scanning burn row: %w", err)
 		}
 
 		b.UatomAmount, _ = decimal.NewFromString(uatom)
 		b.AtomPriceUSD, _ = decimal.NewFromString(priceUSD)
 		b.USDValue, _ = decimal.NewFromString(usdValue)
+		if action != nil {
+			b.Action = *action
+		}
+		if contract != nil {
+			b.Contract = *contract
+		}
 
 		burns = append(burns, b)
 	}

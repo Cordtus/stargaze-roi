@@ -6,17 +6,22 @@ chain_id = "cosmoshub-4"
 grpc_endpoint = "grpc-bd79106337ec-archive.cosmoshub-main.ccvalidators.com:443"
 
 [contract]
-# Stargaze contract addresses on Cosmos Hub
+# Seed addresses: discovery expands these via code_id and creator to find all related contracts
 addresses = [
-    # Marketplace v2 - where trades happen and fees are collected
+    # Marketplace v2 (code 399) - where trades happen
     "cosmos1tl0ptdmlz422z5pj20zujzyt3c96qp2g9vp83uj9pyj8q994tzhsl77adr",
-    # Royalty Registry - manages creator royalty splits
+    # Royalty Registry (code 448) - creator royalty splits
     "cosmos1gm9qzhzdw3wgqev6qlnn4v7edkmkpzk6fe9q5hzffdq6yuqtn3psuk39my",
-    # VMF (ATOM) - primary sales mint fees
+    # VMF ATOM v2 (code 407) - primary sales mint fees
     "cosmos120a2fpwq97v3mk0zdggfxfrzrvv5f6sny5sf2q96x9enf4qn784q2jtp2h",
-    # Migration VMF (ATOM)
+    # Migration VMF (code 410) - migration factory, instantiated all WL Merkle contracts
     "cosmos1qza83ve4xr6gk2aqk5h55falkujfku8y9xec07c45av4rvr2lh0swstpzn",
 ]
+# Code IDs to skip when querying txs (their txs are captured via parent factory contracts)
+# 417 = WL Merkle whitelist contracts (~5043 of them, each instantiated once by Migration VMF)
+skip_code_ids = [417]
+# Earliest Stargaze contract on Cosmos Hub: VMF v1 (code 260) at height 27175064
+start_height = 27175000
 
 [coingecko]
 api_base = "https://api.coingecko.com/api/v3"
@@ -28,8 +33,10 @@ cache_minutes = 1
 # api_key = ""
 
 [target]
-# The grant amount in USD ($1.375M milestones + $125K ATOM incentives)
-usd_amount = "1500000.00"
+# Grant value: 699,626 ATOM * $2.7459 (ATOM price on 2025-11-21)
+usd_amount = "1920692.63"
+# ATOM price on the grant date (2025-11-21)
+grant_price_usd = "2.7459"
 # When the proposal passed (voting end ~2025-11-21)
 grant_date = "2025-11-21"
 # Cosmos Hub Governance Proposal #1017
@@ -38,6 +45,14 @@ proposal_id = 1017
 grant_uatom_amount = "699626000000"
 # Fund management multisig
 multisig_address = "cosmos1vdqfavw0cu0fpvlcl52ku3qztt38szktlpfsuz"
+
+[processor]
+# How often to poll for new transactions (seconds)
+poll_seconds = 10
+
+[discovery]
+# How often to re-discover contracts from code_id/creator expansion (minutes, 0 = startup only)
+refresh_minutes = 60
 
 [server]
 port = 8080

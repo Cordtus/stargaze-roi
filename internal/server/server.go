@@ -113,6 +113,8 @@ func (w *responseWriter) WriteHeader(code int) {
 // StatsResponse is the response for the /api/stats endpoint.
 type StatsResponse struct {
 	TargetUSD        string   `json:"target_usd"`
+	GrantAtom        string   `json:"grant_atom,omitempty"`
+	GrantPriceUSD    string   `json:"grant_price_usd,omitempty"`
 	TotalFeesUSD     string   `json:"total_fees_usd"`
 	TotalFeesAtom    string   `json:"total_fees_atom"`
 	TransactionCount int64    `json:"transaction_count"`
@@ -126,7 +128,6 @@ type StatsResponse struct {
 	ContractInfo     string   `json:"contract_info,omitempty"`
 	ChainID          string   `json:"chain_id"`
 	ProposalID       int      `json:"proposal_id,omitempty"`
-	GrantAtom        string   `json:"grant_atom,omitempty"`
 	MultisigAddress  string   `json:"multisig_address,omitempty"`
 }
 
@@ -152,6 +153,8 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 
 	resp := StatsResponse{
 		TargetUSD:        target.StringFixed(2),
+		GrantAtom:        s.cfg.GrantAtom().StringFixed(6),
+		GrantPriceUSD:    s.cfg.Target.GrantPriceUSD,
 		TotalFeesUSD:     stats.TotalUSDBurned.StringFixed(10),
 		TotalFeesAtom:    totalAtom.StringFixed(6),
 		TransactionCount: stats.TransactionCount,
@@ -162,7 +165,6 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		ContractInfo:     stats.ContractAddress,
 		ChainID:          stats.ChainID,
 		ProposalID:       s.cfg.Target.ProposalID,
-		GrantAtom:        s.cfg.GrantAtom().StringFixed(6),
 		MultisigAddress:  s.cfg.Target.MultisigAddress,
 	}
 
@@ -209,6 +211,8 @@ type TransactionItem struct {
 	AtomPriceUSD string `json:"atom_price_usd"`
 	USDValue     string `json:"usd_value"`
 	Sender       string `json:"sender,omitempty"`
+	Action       string `json:"action,omitempty"`
+	Contract     string `json:"contract,omitempty"`
 }
 
 // handleTransactions returns recent burn transactions.
@@ -252,6 +256,8 @@ func (s *Server) handleTransactions(w http.ResponseWriter, r *http.Request) {
 			AtomPriceUSD: b.AtomPriceUSD.StringFixed(6),
 			USDValue:     b.USDValue.StringFixed(10),
 			Sender:       b.Sender,
+			Action:       b.Action,
+			Contract:     b.Contract,
 		})
 	}
 

@@ -17,32 +17,49 @@ import (
 
 // Processor queries the chain for Stargaze contract transactions and records fee revenue.
 type Processor struct {
-	pool              *pgxpool.Pool
-	chainClient       *chain.Client
-	priceFetcher      *price.Fetcher
-	logger            *slog.Logger
-	contractAddresses []string
-	chainID           string
-	stopCh            chan struct{}
+	pool         *pgxpool.Pool
+	chainClient  *chain.Client
+	discovery    *chain.Discovery
+	priceFetcher *price.Fetcher
+	logger       *slog.Logger
+	chainID      string
+	startHeight  int64
+	skipCodeIDs  map[int64]bool
+	pollInterval time.Duration
+	batchSize    int
+	stopCh       chan struct{}
 }
 
 // New creates a new event processor.
-func New(pool *pgxpool.Pool, chainClient *chain.Client, priceFetcher *price.Fetcher, cfg *config.Config, logger *slog.Logger) *Processor {
+func New(pool *pgxpool.Pool, chainClient *chain.Client, discovery *chain.Discovery, priceFetcher *price.Fetcher, cfg *config.Config, logger *slog.Logger) *Processor {
+	interval := 10 * time.Second
+	if cfg.Processor.PollSeconds > 0 {
+		interval = time.Duration(cfg.Processor.PollSeconds) * time.Second
+	}
+	skipCodes := map[int64]bool{}
+	for _, id := range cfg.Contract.SkipCodeIDs {
+		skipCodes[id] = true
+	}
 	return &Processor{
-		pool:              pool,
-		chainClient:       chainClient,
-		priceFetcher:      priceFetcher,
-		logger:            logger,
-		contractAddresses: cfg.Contract.Addresses,
-		chainID:           cfg.Chain.ChainID,
-		stopCh:            make(chan struct{}),
+		pool:         pool,
+		chainClient:  chainClient,
+		discovery:    discovery,
+		priceFetcher: priceFetcher,
+		logger:       logger,
+		chainID:      cfg.Chain.ChainID,
+		startHeight:  cfg.Contract.StartHeight,
+		skipCodeIDs:  skipCodes,
+		pollInterval: interval,
+		batchSize:    100,
+		stopCh:       make(chan struct{}),
 	}
 }
 
 // Start begins processing contract transactions from the chain via gRPC.
 func (p *Processor) Start(ctx context.Context) error {
-	if len(p.contractAddresses) == 0 {
-		p.logger.Warn("no contract addresses configured, processor will idle until configured")
+	queryable := p.discovery.QueryableContracts(p.skipCodeIDs)
+	if len(queryable) == 0 {
+		p.logger.Warn("no queryable contracts discovered, processor will idle")
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -51,12 +68,26 @@ func (p *Processor) Start(ctx context.Context) error {
 		}
 	}
 
+	// Initialize sync state to configured start height if it's still at 0
+	if p.startHeight > 0 {
+		_, err := p.pool.Exec(ctx, `
+			UPDATE roi_tracker.sync_state
+			SET last_processed_event_id = $1
+			WHERE id = 1 AND last_processed_event_id = 0
+		`, p.startHeight)
+		if err != nil {
+			p.logger.Warn("failed to set start height", "error", err)
+		}
+	}
+
 	p.logger.Info("starting fee revenue processor",
-		"contracts", len(p.contractAddresses),
+		"queryable_contracts", len(queryable),
+		"total_contracts", p.discovery.ContractCount(),
+		"skipped_code_ids", len(p.skipCodeIDs),
 		"chain_id", p.chainID,
 	)
 
-	ticker := time.NewTicker(10 * time.Second)
+	ticker := time.NewTicker(p.pollInterval)
 	defer ticker.Stop()
 
 	for {
@@ -79,6 +110,7 @@ func (p *Processor) Stop() {
 }
 
 // processNewTxs queries the chain for new contract transactions and records their fees.
+// Transactions are deduped by tx_hash across all contracts.
 func (p *Processor) processNewTxs(ctx context.Context) error {
 	var lastHeight int64
 	err := p.pool.QueryRow(ctx, `
@@ -88,76 +120,101 @@ func (p *Processor) processNewTxs(ctx context.Context) error {
 		return err
 	}
 
-	var maxHeight int64 = lastHeight
-	var processedCount int
+	contracts := p.discovery.QueryableContracts(p.skipCodeIDs)
+	if len(contracts) == 0 {
+		return nil
+	}
 
-	for _, contractAddr := range p.contractAddresses {
-		txs, err := p.chainClient.QueryContractTxs(ctx, contractAddr, lastHeight, 100)
+	// Collect all txs across all contracts, dedup by tx_hash
+	seen := map[string]*chain.ContractTx{}
+	var maxHeight int64 = lastHeight
+
+	for _, contractAddr := range contracts {
+		txs, err := p.chainClient.QueryContractTxs(ctx, contractAddr, lastHeight, p.batchSize)
 		if err != nil {
 			p.logger.Warn("failed to query txs", "contract", contractAddr, "error", err)
 			continue
 		}
 
-		for _, tx := range txs {
+		for i := range txs {
+			tx := &txs[i]
 			if tx.Height > maxHeight {
 				maxHeight = tx.Height
 			}
-
-			if tx.FeeUatom <= 0 {
-				continue
+			// Keep first occurrence per tx_hash (avoid double-counting multi-contract txs)
+			if _, exists := seen[tx.TxHash]; !exists {
+				seen[tx.TxHash] = tx
 			}
+		}
+	}
 
-			feeUatom := decimal.NewFromInt(tx.FeeUatom)
+	var processedCount int
+	var dbErrCount int
+	var lastKnownPrice decimal.Decimal
 
-			timestamp := tx.Timestamp
-			if timestamp.IsZero() {
-				timestamp = time.Now()
-			}
+	for _, tx := range seen {
+		if tx.FeeUatom <= 0 {
+			continue
+		}
 
-			atomPrice, err := p.priceFetcher.GetPrice(ctx, timestamp)
+		feeUatom := decimal.NewFromInt(tx.FeeUatom)
+
+		timestamp := tx.Timestamp
+		if timestamp.IsZero() {
+			timestamp = time.Now()
+		}
+
+		atomPrice, err := p.priceFetcher.GetPrice(ctx, timestamp)
+		if err != nil {
+			atomPrice, err = p.priceFetcher.GetCurrentPrice(ctx)
 			if err != nil {
-				p.logger.Warn("failed to get historical price, using current",
-					"tx_hash", tx.TxHash, "error", err)
-				atomPrice, err = p.priceFetcher.GetCurrentPrice(ctx)
-				if err != nil {
-					p.logger.Error("failed to get any price", "error", err)
+				// Use last known price as final fallback (price will be corrected later)
+				if lastKnownPrice.IsZero() {
+					p.logger.Warn("no price available, skipping tx (will retry)",
+						"tx_hash", tx.TxHash, "error", err)
 					continue
 				}
+				p.logger.Debug("using last known price as fallback", "tx_hash", tx.TxHash)
+				atomPrice = lastKnownPrice
 			}
-
-			usdValue := price.CalculateUSD(feeUatom, atomPrice)
-
-			// Use tx_hash for dedup (wasm_event_id column repurposed as unique key)
-			_, err = p.pool.Exec(ctx, `
-				INSERT INTO roi_tracker.processed_burns
-				(wasm_event_id, tx_hash, height, timestamp, uatom_amount, atom_price_usd, usd_value, sender)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-				ON CONFLICT (wasm_event_id) DO NOTHING
-			`, tx.Height, tx.TxHash, tx.Height, timestamp, feeUatom.String(), atomPrice.String(), usdValue.String(), tx.Sender)
-
-			if err != nil {
-				p.logger.Error("failed to insert fee record", "tx_hash", tx.TxHash, "error", err)
-				continue
-			}
-
-			processedCount++
-			p.logger.Info("recorded fee revenue",
-				"tx_hash", tx.TxHash,
-				"height", tx.Height,
-				"action", tx.Action,
-				"fee_uatom", tx.FeeUatom,
-				"atom_price", atomPrice.StringFixed(4),
-				"usd", usdValue.StringFixed(6),
-			)
 		}
+		lastKnownPrice = atomPrice
+
+		usdValue := price.CalculateUSD(feeUatom, atomPrice)
+
+		_, err = p.pool.Exec(ctx, `
+			INSERT INTO roi_tracker.processed_burns
+			(tx_hash, height, timestamp, uatom_amount, atom_price_usd, usd_value, sender, action, contract)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			ON CONFLICT (tx_hash) DO NOTHING
+		`, tx.TxHash, tx.Height, timestamp, feeUatom.String(), atomPrice.String(), usdValue.String(),
+			tx.Sender, tx.Action, tx.Contract)
+
+		if err != nil {
+			p.logger.Error("failed to insert fee record", "tx_hash", tx.TxHash, "error", err)
+			dbErrCount++
+			continue
+		}
+
+		processedCount++
+	}
+
+	// Only block cursor on DB errors (not price failures)
+	if dbErrCount > 0 {
+		p.logger.Warn("DB insert errors, not advancing cursor",
+			"db_errors", dbErrCount, "processed", processedCount)
+		return nil
 	}
 
 	if maxHeight > lastHeight {
 		_, err = p.pool.Exec(ctx, `
 			UPDATE roi_tracker.sync_state
-			SET last_processed_event_id = $1, contract_address = $2, chain_id = $3, updated_at = NOW()
+			SET last_processed_event_id = $1,
+			    contract_address = $2,
+			    chain_id = $3,
+			    updated_at = NOW()
 			WHERE id = 1
-		`, maxHeight, fmt.Sprintf("%d contracts", len(p.contractAddresses)), p.chainID)
+		`, maxHeight, fmt.Sprintf("%d contracts", p.discovery.ContractCount()), p.chainID)
 		if err != nil {
 			p.logger.Error("failed to update sync state", "error", err)
 		}
@@ -166,6 +223,7 @@ func (p *Processor) processNewTxs(ctx context.Context) error {
 			p.logger.Info("processing complete",
 				"fees_recorded", processedCount,
 				"last_height", maxHeight,
+				"unique_txs", len(seen),
 			)
 		}
 	}

@@ -18,8 +18,8 @@
 		<main>
 			<div class="progress-section">
 				<div class="target-label">
-					<span class="label">Grant Amount</span>
-					<span class="value" id="target-amount">$1,500,000.00</span>
+					<span class="label">Grant Value at Time of Approval</span>
+					<span class="value" id="target-amount">-</span>
 				</div>
 
 				<div class="progress-container">
@@ -42,8 +42,12 @@
 						<span class="value" id="tx-count">0</span>
 					</div>
 					<div class="stat">
-						<span class="label">Grant Amount (ATOM)</span>
+						<span class="label">Grant (ATOM)</span>
 						<span class="value" id="grant-atom">-</span>
+					</div>
+					<div class="stat">
+						<span class="label">ATOM Price at Grant</span>
+						<span class="value" id="grant-price">-</span>
 					</div>
 					<div class="stat">
 						<span class="label">Avg ATOM Price (VWAP)</span>
@@ -86,11 +90,7 @@
 		</main>
 
 		<footer>
-			<p>
-				Data sourced from Cosmos Hub. Price data from CoinGecko.
-				<br>
-				<a href="https://github.com/cordt-sei/starmos-roi-tracker" target="_blank" rel="noopener">Source Code</a>
-			</p>
+			<p>Data sourced from Cosmos Hub. Price data from CoinGecko.</p>
 		</footer>
 	</div>
 
@@ -125,6 +125,7 @@
 
 			const grantAtom = num(s.grant_atom);
 			document.getElementById('grant-atom').textContent = grantAtom > 0 ? `${grantAtom.toLocaleString()} ATOM` : '-';
+			document.getElementById('grant-price').textContent = s.grant_price_usd ? formatUSD(s.grant_price_usd, 4) : '-';
 
 			if (s.proposal_id) {
 				document.getElementById('proposal-info').textContent = `Cosmos Hub Governance Proposal #${s.proposal_id}`;

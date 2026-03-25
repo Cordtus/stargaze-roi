@@ -17,6 +17,10 @@ const (
 	methodGetNodeInfo = "cosmos.base.tendermint.v1beta1.Service.GetNodeInfo"
 	methodLatestBlock = "cosmos.base.tendermint.v1beta1.Service.GetLatestBlock"
 
+	methodContractInfo     = "cosmwasm.wasm.v1.Query.ContractInfo"
+	methodContractsByCode  = "cosmwasm.wasm.v1.Query.ContractsByCode"
+	methodContractsByCreat = "cosmwasm.wasm.v1.Query.ContractsByCreator"
+
 	defaultDialTimeout = 30 * time.Second
 )
 
@@ -102,16 +106,20 @@ type pagination struct {
 
 // QueryContractTxs queries the chain for transactions involving the given contract
 // after the given height. Returns transactions sorted ascending by height.
+// Uses nextKey pagination first; if the node caps results (empty nextKey but full page),
+// falls back to height-based re-querying to drain all results.
 func (c *Client) QueryContractTxs(ctx context.Context, contractAddr string, afterHeight int64, limit int) ([]ContractTx, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 
 	var allTxs []ContractTx
+	seen := map[string]bool{}
 	var pageKey string
+	cursor := afterHeight
 
 	for {
-		query := fmt.Sprintf("wasm._contract_address='%s' AND tx.height>%d", contractAddr, afterHeight)
+		query := fmt.Sprintf("wasm._contract_address='%s' AND tx.height>%d", contractAddr, cursor)
 
 		params := map[string]any{
 			"query":    query,
@@ -137,12 +145,37 @@ func (c *Client) QueryContractTxs(ctx context.Context, contractAddr string, afte
 		}
 
 		txs := c.extractContractTxs(result.TxResponses, contractAddr)
-		allTxs = append(allTxs, txs...)
-
-		if result.Pagination == nil || result.Pagination.NextKey == "" {
-			break
+		var maxHeight int64
+		for _, tx := range txs {
+			if !seen[tx.TxHash] {
+				seen[tx.TxHash] = true
+				allTxs = append(allTxs, tx)
+			}
+			if tx.Height > maxHeight {
+				maxHeight = tx.Height
+			}
 		}
-		pageKey = result.Pagination.NextKey
+
+		// If server provides a nextKey, use it
+		if result.Pagination != nil && result.Pagination.NextKey != "" {
+			pageKey = result.Pagination.NextKey
+			continue
+		}
+
+		// nextKey is empty. If we got a full page, the node likely capped results.
+		// Re-query using height cursor to get the next batch.
+		if len(result.TxResponses) >= limit && maxHeight > cursor {
+			c.logger.Debug("page full with no nextKey, advancing height cursor",
+				"contract", contractAddr[:20]+"...",
+				"cursor", cursor, "new_cursor", maxHeight,
+				"collected", len(allTxs),
+			)
+			cursor = maxHeight
+			pageKey = ""
+			continue
+		}
+
+		break
 	}
 
 	return allTxs, nil
@@ -234,6 +267,130 @@ func (c *Client) GetChainID(ctx context.Context) (string, error) {
 	}
 
 	return result.DefaultNodeInfo.Network, nil
+}
+
+// ContractInfo holds metadata about a CosmWasm contract.
+type ContractInfo struct {
+	Address string
+	CodeID  int64
+	Creator string
+	Admin   string
+	Label   string
+}
+
+// GetContractInfo queries the chain for a contract's metadata (code_id, creator, admin, label).
+func (c *Client) GetContractInfo(ctx context.Context, addr string) (*ContractInfo, error) {
+	params, _ := json.Marshal(map[string]any{"address": addr})
+	resp, err := c.yaci.Invoke(methodContractInfo, params)
+	if err != nil {
+		return nil, fmt.Errorf("ContractInfo(%s): %w", addr, err)
+	}
+
+	var result struct {
+		Address      string `json:"address"`
+		ContractInfo struct {
+			CodeID  string `json:"codeId"`
+			Creator string `json:"creator"`
+			Admin   string `json:"admin"`
+			Label   string `json:"label"`
+		} `json:"contractInfo"`
+	}
+	if err := json.Unmarshal(resp, &result); err != nil {
+		return nil, fmt.Errorf("parsing ContractInfo: %w", err)
+	}
+
+	var codeID int64
+	fmt.Sscanf(result.ContractInfo.CodeID, "%d", &codeID)
+
+	return &ContractInfo{
+		Address: result.Address,
+		CodeID:  codeID,
+		Creator: result.ContractInfo.Creator,
+		Admin:   result.ContractInfo.Admin,
+		Label:   result.ContractInfo.Label,
+	}, nil
+}
+
+// GetContractsByCode returns all contract addresses instantiated from a given code_id.
+func (c *Client) GetContractsByCode(ctx context.Context, codeID int64) ([]string, error) {
+	var all []string
+	var pageKey string
+
+	for {
+		req := map[string]any{
+			"codeId": fmt.Sprintf("%d", codeID),
+			"pagination": map[string]any{
+				"limit": 100,
+			},
+		}
+		if pageKey != "" {
+			req["pagination"].(map[string]any)["key"] = pageKey
+		}
+
+		params, _ := json.Marshal(req)
+		resp, err := c.yaci.Invoke(methodContractsByCode, params)
+		if err != nil {
+			return nil, fmt.Errorf("ContractsByCode(%d): %w", codeID, err)
+		}
+
+		var result struct {
+			Contracts  []string    `json:"contracts"`
+			Pagination *pagination `json:"pagination,omitempty"`
+		}
+		if err := json.Unmarshal(resp, &result); err != nil {
+			return nil, fmt.Errorf("parsing ContractsByCode: %w", err)
+		}
+
+		all = append(all, result.Contracts...)
+
+		if result.Pagination == nil || result.Pagination.NextKey == "" {
+			break
+		}
+		pageKey = result.Pagination.NextKey
+	}
+
+	return all, nil
+}
+
+// GetContractsByCreator returns all contract addresses deployed by a given creator.
+func (c *Client) GetContractsByCreator(ctx context.Context, creator string) ([]string, error) {
+	var all []string
+	var pageKey string
+
+	for {
+		req := map[string]any{
+			"creatorAddress": creator,
+			"pagination": map[string]any{
+				"limit": 100,
+			},
+		}
+		if pageKey != "" {
+			req["pagination"].(map[string]any)["key"] = pageKey
+		}
+
+		params, _ := json.Marshal(req)
+		resp, err := c.yaci.Invoke(methodContractsByCreat, params)
+		if err != nil {
+			return nil, fmt.Errorf("ContractsByCreator(%s): %w", creator, err)
+		}
+
+		var result struct {
+			ContractAddresses []string    `json:"contractAddresses"`
+			Pagination        *pagination `json:"pagination,omitempty"`
+		}
+		if err := json.Unmarshal(resp, &result); err != nil {
+			return nil, fmt.Errorf("parsing ContractsByCreator: %w", err)
+		}
+
+		all = append(all, result.ContractAddresses...)
+
+		if result.Pagination == nil || result.Pagination.NextKey == "" {
+			break
+		}
+		pageKey = result.Pagination.NextKey
+	}
+
+	return all, nil
 }
 
 // GetLatestHeight returns the latest block height.

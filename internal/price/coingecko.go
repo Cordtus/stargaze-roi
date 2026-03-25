@@ -280,6 +280,51 @@ func (f *Fetcher) rateLimit() {
 	f.lastRequest = time.Now()
 }
 
+// Backfill populates the price cache for every day in the given range.
+// Paced to stay within the CoinGecko rate limit. Skips dates already cached.
+// Returns the number of prices fetched.
+func (f *Fetcher) Backfill(ctx context.Context, from, to time.Time) (int, error) {
+	from = from.UTC().Truncate(24 * time.Hour)
+	to = to.UTC().Truncate(24 * time.Hour)
+
+	fetched := 0
+	for d := from; !d.After(to); d = d.Add(24 * time.Hour) {
+		select {
+		case <-ctx.Done():
+			return fetched, ctx.Err()
+		default:
+		}
+
+		minute := d.Truncate(time.Minute)
+
+		// Skip if already cached
+		if _, found, err := db.GetCachedPrice(ctx, f.pool, minute); err == nil && found {
+			continue
+		}
+
+		price, err := f.fetchHistoricalPrice(ctx, d)
+		if err != nil {
+			f.logger.Warn("backfill: failed to fetch price, will retry later",
+				"date", d.Format("2006-01-02"), "error", err)
+			continue
+		}
+
+		if err := db.CachePrice(ctx, f.pool, minute, price); err != nil {
+			f.logger.Warn("backfill: failed to cache price", "date", d.Format("2006-01-02"), "error", err)
+			continue
+		}
+
+		fetched++
+		f.logger.Info("backfill: cached price",
+			"date", d.Format("2006-01-02"),
+			"price", price.StringFixed(4),
+			"progress", fmt.Sprintf("%d days", fetched),
+		)
+	}
+
+	return fetched, nil
+}
+
 // UatomToAtom converts uatom (micro-ATOM) to ATOM.
 // 1 ATOM = 1,000,000 uatom
 func UatomToAtom(uatom decimal.Decimal) decimal.Decimal {
