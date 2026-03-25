@@ -104,6 +104,22 @@ func (d *Discovery) ContractCount() int {
 	return len(d.contracts)
 }
 
+// Creators returns the unique creator addresses from all discovered contracts.
+func (d *Discovery) Creators() []string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	seen := map[string]bool{}
+	var creators []string
+	for _, info := range d.contracts {
+		if !seen[info.Creator] {
+			seen[info.Creator] = true
+			creators = append(creators, info.Creator)
+		}
+	}
+	return creators
+}
+
 // expand discovers all contracts related to seeds via code_id and creator lookups.
 func (d *Discovery) expand(ctx context.Context, seeds []string) error {
 	// Track which code_ids and creators we've already expanded

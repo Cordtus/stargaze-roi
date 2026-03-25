@@ -393,6 +393,87 @@ func (c *Client) GetContractsByCreator(ctx context.Context, creator string) ([]s
 	return all, nil
 }
 
+// QueryCreatorTxs queries for non-contract transactions by a creator address,
+// such as MsgStoreCode, MsgUpdateAdmin, etc. that don't emit wasm._contract_address.
+func (c *Client) QueryCreatorTxs(ctx context.Context, creator string, afterHeight int64, limit int) ([]ContractTx, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	var allTxs []ContractTx
+	seen := map[string]bool{}
+	cursor := afterHeight
+
+	// Query for each message type that doesn't produce wasm._contract_address events
+	actions := []string{
+		"/cosmwasm.wasm.v1.MsgStoreCode",
+		"/cosmwasm.wasm.v1.MsgUpdateAdmin",
+		"/cosmwasm.wasm.v1.MsgClearAdmin",
+	}
+
+	for _, action := range actions {
+		pageCursor := cursor
+		var pageKey string
+
+		for {
+			query := fmt.Sprintf("message.sender='%s' AND message.action='%s' AND tx.height>%d", creator, action, pageCursor)
+
+			params := map[string]any{
+				"query":    query,
+				"order_by": "ORDER_BY_ASC",
+				"pagination": map[string]any{
+					"limit": limit,
+				},
+			}
+			if pageKey != "" {
+				params["pagination"].(map[string]any)["key"] = pageKey
+			}
+
+			paramsJSON, _ := json.Marshal(params)
+
+			resp, err := c.yaci.Invoke(methodGetTxsEvent, paramsJSON)
+			if err != nil {
+				c.logger.Warn("failed to query creator txs", "action", action, "error", err)
+				break
+			}
+
+			var result txsResponse
+			if err := json.Unmarshal(resp, &result); err != nil {
+				break
+			}
+
+			txs := c.extractContractTxs(result.TxResponses, "store_code:"+creator)
+			var maxHeight int64
+			for _, tx := range txs {
+				if !seen[tx.TxHash] {
+					seen[tx.TxHash] = true
+					// Override action with the message type
+					tx.Action = strings.TrimPrefix(action, "/cosmwasm.wasm.v1.")
+					allTxs = append(allTxs, tx)
+				}
+				if tx.Height > maxHeight {
+					maxHeight = tx.Height
+				}
+			}
+
+			if result.Pagination != nil && result.Pagination.NextKey != "" {
+				pageKey = result.Pagination.NextKey
+				continue
+			}
+
+			if len(result.TxResponses) >= limit && maxHeight > pageCursor {
+				pageCursor = maxHeight
+				pageKey = ""
+				continue
+			}
+
+			break
+		}
+	}
+
+	return allTxs, nil
+}
+
 // GetLatestHeight returns the latest block height.
 func (c *Client) GetLatestHeight(ctx context.Context) (int64, error) {
 	resp, err := c.yaci.Invoke(methodLatestBlock, nil)

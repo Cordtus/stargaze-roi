@@ -141,7 +141,25 @@ func (p *Processor) processNewTxs(ctx context.Context) error {
 			if tx.Height > maxHeight {
 				maxHeight = tx.Height
 			}
-			// Keep first occurrence per tx_hash (avoid double-counting multi-contract txs)
+			if _, exists := seen[tx.TxHash]; !exists {
+				seen[tx.TxHash] = tx
+			}
+		}
+	}
+
+	// Also query non-contract txs by creator (MsgStoreCode, MsgUpdateAdmin, etc.)
+	for _, creator := range p.discovery.Creators() {
+		txs, err := p.chainClient.QueryCreatorTxs(ctx, creator, lastHeight, p.batchSize)
+		if err != nil {
+			p.logger.Warn("failed to query creator txs", "creator", creator, "error", err)
+			continue
+		}
+
+		for i := range txs {
+			tx := &txs[i]
+			if tx.Height > maxHeight {
+				maxHeight = tx.Height
+			}
 			if _, exists := seen[tx.TxHash]; !exists {
 				seen[tx.TxHash] = tx
 			}
