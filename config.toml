@@ -17,9 +17,12 @@ addresses = [
     # Migration VMF (code 410) - migration factory, instantiated all WL Merkle contracts
     "cosmos1qza83ve4xr6gk2aqk5h55falkujfku8y9xec07c45av4rvr2lh0swstpzn",
 ]
-# Code IDs to skip when querying txs (their txs are captured via parent factory contracts)
-# 417 = WL Merkle whitelist contracts (~5043 of them, each instantiated once by Migration VMF)
-skip_code_ids = [417]
+# Code IDs to skip when querying txs (empty = query all discovered contracts)
+skip_code_ids = []
+# Extra code IDs to discover beyond what seed expansion finds.
+# These are contracts instantiated by factory sub-messages (not by the deployer wallet directly).
+# 416 = cw721-migration NFT collection contracts (instantiated by minters)
+extra_code_ids = [416]
 # Earliest Stargaze contract on Cosmos Hub: VMF v1 (code 260) at height 27175064
 start_height = 27175000
 
@@ -33,12 +36,12 @@ cache_minutes = 1
 # api_key = ""
 
 [target]
-# Grant value: 699,626 ATOM * $2.7459 (ATOM price on 2025-11-21)
-usd_amount = "1920692.63"
-# ATOM price on the grant date (2025-11-21)
-grant_price_usd = "2.7459"
-# When the proposal passed (voting end ~2025-11-21)
-grant_date = "2025-11-21"
+# Grant value: 699,626 ATOM * $2.46 (ATOM price on 2025-11-26)
+usd_amount = "1721079.96"
+# ATOM price on the grant date (2025-11-26)
+grant_price_usd = "2.46"
+# When the proposal passed (voting end ~2025-11-26)
+grant_date = "2025-11-26"
 # Cosmos Hub Governance Proposal #1017
 proposal_id = 1017
 # 699,626 ATOM transferred from community pool (in uatom)
@@ -56,7 +59,7 @@ refresh_minutes = 60
 
 [server]
 port = 8080
-static_dir = "./static"
+static_dir = "/opt/roi-tracker/static"
 
 [database]
 # PostgreSQL connection string - same database as CosmoFlow-Maps

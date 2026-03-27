@@ -34,6 +34,9 @@ type ContractConfig struct {
 	Addresses []string `toml:"addresses"`
 	// SkipCodeIDs are code_ids to skip when querying for txs (their txs are captured via parent contracts)
 	SkipCodeIDs []int64 `toml:"skip_code_ids"`
+	// ExtraCodeIDs are additional code_ids to discover via ContractsByCode, beyond what seed
+	// expansion finds. Used for contracts instantiated by factory sub-messages (e.g., cw721).
+	ExtraCodeIDs []int64 `toml:"extra_code_ids"`
 	// StartHeight is the block height to begin indexing from (0 = from contract creation)
 	StartHeight int64 `toml:"start_height"`
 }

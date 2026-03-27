@@ -1,6 +1,6 @@
 # Binaries
 bin/
-tracker
+/tracker
 *.exe
 *.exe~
 *.dll
@@ -43,3 +43,6 @@ tmp/
 PROJECT_BLUEPRINT.md
 IMPLEMENTATION_PLAN.md
 DATA_PLAN.md
+CONTRACT-DISCOVERY-BREAKDOWN.md
+discovery-breakdown.md
+INDEXING-FLOW.md

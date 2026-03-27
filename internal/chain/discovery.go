@@ -40,7 +40,8 @@ func NewDiscovery(client *Client, pool *pgxpool.Pool, logger *slog.Logger, refre
 
 // Run performs initial discovery from seed addresses and optionally refreshes periodically.
 // It loads cached contracts from the DB first, then expands from seeds.
-func (d *Discovery) Run(ctx context.Context, seeds []string) error {
+// extraCodeIDs are additional code_ids to discover via ContractsByCode (for sub-message-instantiated contracts).
+func (d *Discovery) Run(ctx context.Context, seeds []string, extraCodeIDs ...[]int64) error {
 	// Load existing cache from DB
 	cached, err := d.loadCached(ctx)
 	if err != nil {
@@ -59,9 +60,20 @@ func (d *Discovery) Run(ctx context.Context, seeds []string) error {
 		return fmt.Errorf("initial discovery: %w", err)
 	}
 
+	// Discover contracts from extra code IDs (sub-message-instantiated contracts like cw721)
+	var extras []int64
+	if len(extraCodeIDs) > 0 {
+		extras = extraCodeIDs[0]
+	}
+	if len(extras) > 0 {
+		if err := d.expandByCodeIDs(ctx, extras); err != nil {
+			d.logger.Warn("extra code_id discovery failed", "error", err)
+		}
+	}
+
 	// Periodic refresh if configured
 	if d.refreshEvery > 0 {
-		go d.refreshLoop(ctx, seeds)
+		go d.refreshLoop(ctx, seeds, extras)
 	}
 
 	return nil
@@ -104,6 +116,18 @@ func (d *Discovery) ContractCount() int {
 	return len(d.contracts)
 }
 
+// KnownCodeIDs returns the set of all code IDs from discovered contracts.
+func (d *Discovery) KnownCodeIDs() map[int64]bool {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	ids := map[int64]bool{}
+	for _, info := range d.contracts {
+		ids[info.CodeID] = true
+	}
+	return ids
+}
+
 // Creators returns the unique creator addresses from all discovered contracts.
 func (d *Discovery) Creators() []string {
 	d.mu.RLock()
@@ -118,6 +142,29 @@ func (d *Discovery) Creators() []string {
 		}
 	}
 	return creators
+}
+
+// Admins returns unique admin addresses from all discovered contracts (excluding empty admins
+// and addresses already covered by Creators).
+func (d *Discovery) Admins() []string {
+	d.mu.RLock()
+	defer d.mu.RUnlock()
+
+	creators := map[string]bool{}
+	for _, info := range d.contracts {
+		creators[info.Creator] = true
+	}
+
+	seen := map[string]bool{}
+	var admins []string
+	for _, info := range d.contracts {
+		if info.Admin == "" || creators[info.Admin] || seen[info.Admin] {
+			continue
+		}
+		seen[info.Admin] = true
+		admins = append(admins, info.Admin)
+	}
+	return admins
 }
 
 // expand discovers all contracts related to seeds via code_id and creator lookups.
@@ -325,8 +372,55 @@ func (d *Discovery) expandFromCodesAndCreators(ctx context.Context, codes []int6
 	return nil
 }
 
+// expandByCodeIDs discovers all contracts for the given code IDs via ContractsByCode.
+// Used for contracts instantiated by factory sub-messages that aren't reachable via seed expansion.
+func (d *Discovery) expandByCodeIDs(ctx context.Context, codeIDs []int64) error {
+	var newContracts []*ContractInfo
+
+	for _, codeID := range codeIDs {
+		addrs, err := d.client.GetContractsByCode(ctx, codeID)
+		if err != nil {
+			d.logger.Warn("failed to query contracts by extra code_id", "code_id", codeID, "error", err)
+			continue
+		}
+
+		added := 0
+		for _, addr := range addrs {
+			d.mu.RLock()
+			_, known := d.contracts[addr]
+			d.mu.RUnlock()
+			if known {
+				continue
+			}
+
+			info, err := d.client.GetContractInfo(ctx, addr)
+			if err != nil {
+				d.logger.Warn("skipping extra contract", "address", addr, "error", err)
+				continue
+			}
+
+			d.mu.Lock()
+			d.contracts[addr] = info
+			d.mu.Unlock()
+			newContracts = append(newContracts, info)
+			added++
+		}
+
+		d.logger.Info("discovered contracts from extra code_id",
+			"code_id", codeID, "total", len(addrs), "new", added)
+	}
+
+	if len(newContracts) > 0 {
+		if err := d.persistContracts(ctx, newContracts); err != nil {
+			d.logger.Error("failed to persist extra contracts", "error", err)
+		}
+	}
+
+	return nil
+}
+
 // refreshLoop periodically re-runs discovery to catch newly deployed contracts.
-func (d *Discovery) refreshLoop(ctx context.Context, seeds []string) {
+func (d *Discovery) refreshLoop(ctx context.Context, seeds []string, extraCodeIDs []int64) {
 	ticker := time.NewTicker(d.refreshEvery)
 	defer ticker.Stop()
 
@@ -338,6 +432,11 @@ func (d *Discovery) refreshLoop(ctx context.Context, seeds []string) {
 			d.logger.Debug("refreshing contract discovery")
 			if err := d.expand(ctx, seeds); err != nil {
 				d.logger.Warn("discovery refresh failed", "error", err)
+			}
+			if len(extraCodeIDs) > 0 {
+				if err := d.expandByCodeIDs(ctx, extraCodeIDs); err != nil {
+					d.logger.Warn("extra code_id refresh failed", "error", err)
+				}
 			}
 		}
 	}

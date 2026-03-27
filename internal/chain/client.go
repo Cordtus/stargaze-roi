@@ -69,6 +69,7 @@ type ContractTx struct {
 	FeeUatom  int64 // Gas fee paid in uatom
 	Action    string
 	Contract  string
+	CodeID    int64 // Code ID from instantiate/migrate events (0 if not applicable)
 	Timestamp time.Time
 }
 
@@ -112,8 +113,16 @@ func (c *Client) QueryContractTxs(ctx context.Context, contractAddr string, afte
 		limit = 100
 	}
 
-	// Query both event key prefixes -- some chains index under wasm.*, others under execute.*
-	prefixes := []string{"wasm._contract_address", "execute._contract_address"}
+	// Query all event key prefixes that reference a contract address:
+	// - wasm.* / execute.* for MsgExecuteContract (varies by SDK/wasmd version)
+	// - instantiate.* for MsgInstantiateContract / MsgInstantiateContract2
+	// - migrate.* for MsgMigrateContract
+	prefixes := []string{
+		"wasm._contract_address",
+		"execute._contract_address",
+		"instantiate._contract_address",
+		"migrate._contract_address",
+	}
 
 	var allTxs []ContractTx
 	seen := map[string]bool{}
@@ -231,6 +240,7 @@ func (c *Client) extractContractTxs(txResponses []txResponse, contractAddr strin
 
 		// Extract fee from the first coin_spent event (tx fee payment)
 		// Extract wasm action and sender from wasm events
+		// Extract code_id from instantiate/migrate events
 		feeFound := false
 		for _, evt := range txResp.Events {
 			switch evt.Type {
@@ -250,6 +260,15 @@ func (c *Client) extractContractTxs(txResponses []txResponse, contractAddr strin
 				for _, a := range evt.Attributes {
 					if a.Key == "action" && ct.Action == "" {
 						ct.Action = a.Value
+					}
+				}
+			case "instantiate", "migrate":
+				for _, a := range evt.Attributes {
+					if a.Key == "code_id" && ct.CodeID == 0 {
+						fmt.Sscanf(a.Value, "%d", &ct.CodeID)
+					}
+					if a.Key == "_contract_address" && ct.Contract == contractAddr {
+						ct.Contract = a.Value
 					}
 				}
 			default:
@@ -423,8 +442,10 @@ func (c *Client) GetContractsByCreator(ctx context.Context, creator string) ([]s
 }
 
 // QueryCreatorTxs queries for non-contract transactions by a creator address,
-// such as MsgStoreCode, MsgUpdateAdmin, etc. that don't emit wasm._contract_address.
-func (c *Client) QueryCreatorTxs(ctx context.Context, creator string, afterHeight int64, limit int) ([]ContractTx, error) {
+// such as MsgStoreCode, MsgUpdateAdmin, MsgInstantiateContract, MsgMigrateContract, etc.
+// that don't reliably emit wasm._contract_address events.
+// knownCodeIDs filters instantiate/migrate txs to only include Stargaze-related contracts.
+func (c *Client) QueryCreatorTxs(ctx context.Context, creator string, afterHeight int64, limit int, knownCodeIDs map[int64]bool) ([]ContractTx, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -433,16 +454,26 @@ func (c *Client) QueryCreatorTxs(ctx context.Context, creator string, afterHeigh
 	seen := map[string]bool{}
 	cursor := afterHeight
 
-	// Query for each message type that doesn't produce wasm._contract_address events
 	actions := []string{
 		"/cosmwasm.wasm.v1.MsgStoreCode",
 		"/cosmwasm.wasm.v1.MsgUpdateAdmin",
 		"/cosmwasm.wasm.v1.MsgClearAdmin",
+		"/cosmwasm.wasm.v1.MsgInstantiateContract",
+		"/cosmwasm.wasm.v1.MsgInstantiateContract2",
+		"/cosmwasm.wasm.v1.MsgMigrateContract",
+	}
+
+	// Actions that require code_id filtering
+	codeIDFiltered := map[string]bool{
+		"/cosmwasm.wasm.v1.MsgInstantiateContract":  true,
+		"/cosmwasm.wasm.v1.MsgInstantiateContract2": true,
+		"/cosmwasm.wasm.v1.MsgMigrateContract":      true,
 	}
 
 	for _, action := range actions {
 		pageCursor := cursor
 		var pageKey string
+		needsCodeFilter := codeIDFiltered[action] && len(knownCodeIDs) > 0
 
 		for {
 			query := fmt.Sprintf("message.sender='%s' AND message.action='%s' AND tx.height>%d", creator, action, pageCursor)
@@ -471,18 +502,22 @@ func (c *Client) QueryCreatorTxs(ctx context.Context, creator string, afterHeigh
 				break
 			}
 
-			txs := c.extractContractTxs(result.TxResponses, "store_code:"+creator)
+			txs := c.extractContractTxs(result.TxResponses, "creator:"+creator)
 			var maxHeight int64
 			for _, tx := range txs {
-				if !seen[tx.TxHash] {
-					seen[tx.TxHash] = true
-					// Override action with the message type
-					tx.Action = strings.TrimPrefix(action, "/cosmwasm.wasm.v1.")
-					allTxs = append(allTxs, tx)
-				}
 				if tx.Height > maxHeight {
 					maxHeight = tx.Height
 				}
+				if seen[tx.TxHash] {
+					continue
+				}
+				// Filter instantiate/migrate by known Stargaze code IDs
+				if needsCodeFilter && !knownCodeIDs[tx.CodeID] {
+					continue
+				}
+				seen[tx.TxHash] = true
+				tx.Action = strings.TrimPrefix(action, "/cosmwasm.wasm.v1.")
+				allTxs = append(allTxs, tx)
 			}
 
 			if result.Pagination != nil && result.Pagination.NextKey != "" {

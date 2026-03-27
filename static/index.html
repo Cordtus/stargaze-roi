@@ -23,10 +23,11 @@
 				</div>
 
 				<div class="progress-container">
-					<div class="progress-bar" id="progress-bar">
-						<span class="progress-text" id="progress-text">0%</span>
-					</div>
+					<div class="progress-bar" id="progress-bar"></div>
+					<span class="progress-text" id="progress-text">0%</span>
 				</div>
+
+				<div class="rate-stats" id="rate-stats"></div>
 
 				<div class="tabs">
 					<button class="tab active" data-tab="overview">Overview</button>
@@ -55,7 +56,7 @@
 							<span class="value" id="tx-count">0</span>
 						</div>
 						<div class="stat">
-							<span class="label">Grant (ATOM)</span>
+							<span class="label">Total Request (ATOM)</span>
 							<span class="value" id="grant-atom">-</span>
 						</div>
 						<div class="stat">
@@ -146,10 +147,73 @@
 
 		function num(v) { return parseFloat(v) || 0; }
 
+		/**
+		 * Position the progress percentage text relative to the bar.
+		 * If the bar is wide enough (>= 5%), center the text inside it.
+		 * Otherwise, place the text just to the right of the bar.
+		 * @param {number} pct - The progress percentage (0-100)
+		 */
+		function positionProgressText(pct) {
+			const textEl = document.getElementById('progress-text');
+			const containerEl = document.querySelector('.progress-container');
+			if (!textEl || !containerEl) return;
+
+			const containerWidth = containerEl.offsetWidth;
+			const barWidthPx = (Math.max(pct, 0.1) / 100) * containerWidth;
+
+			if (pct >= 5) {
+				// Center inside the bar
+				textEl.style.left = (barWidthPx / 2) + 'px';
+				textEl.style.transform = 'translateY(-50%) translateX(-50%)';
+			} else {
+				// Place to the right of the bar with a small gap
+				textEl.style.left = (barWidthPx + 8) + 'px';
+				textEl.style.transform = 'translateY(-50%)';
+			}
+		}
+
+		/**
+		 * Compute and display rate-of-change stats from first_tx_timestamp and total_fees_atom.
+		 * @param {object} s - The stats API response
+		 */
+		function displayRateStats(s) {
+			const el = document.getElementById('rate-stats');
+			if (!el) return;
+
+			const totalAtom = num(s.total_fees_atom);
+			const firstTx = s.first_tx_timestamp;
+			if (!firstTx || totalAtom <= 0) {
+				el.innerHTML = '';
+				return;
+			}
+
+			const firstDate = new Date(firstTx);
+			const now = new Date();
+			const msPerDay = 86400000;
+			const daysSinceFirst = (now - firstDate) / msPerDay;
+
+			if (daysSinceFirst < 0.01) {
+				el.innerHTML = '';
+				return;
+			}
+
+			const atomPerDay = totalAtom / daysSinceFirst;
+			const atomPerWeek = atomPerDay * 7;
+			const atomPerMonth = atomPerDay * 30;
+
+			el.innerHTML =
+				'<span class="rate-value">~' + atomPerDay.toFixed(2) + ' ATOM/day</span>' +
+				'<span class="rate-sep">|</span>' +
+				'<span class="rate-value">~' + atomPerWeek.toFixed(2) + ' ATOM/week</span>' +
+				'<span class="rate-sep">|</span>' +
+				'<span class="rate-value">~' + atomPerMonth.toFixed(2) + ' ATOM/month</span>';
+		}
+
 		function displayStats(s) {
 			const pct = Math.min(num(s.progress_percent), 100);
 			document.getElementById('progress-bar').style.width = `${Math.max(pct, 0.1)}%`;
 			document.getElementById('progress-text').textContent = `${pct.toFixed(4)}%`;
+			positionProgressText(pct);
 
 			document.getElementById('target-amount').textContent = formatUSD(s.target_usd);
 
@@ -202,6 +266,8 @@
 
 			document.getElementById('data-updated').textContent = s.updated_at ? `Data updated: ${formatDate(s.updated_at)}` : 'Data updated: -';
 			document.getElementById('page-loaded').textContent = `Loaded: ${new Date().toLocaleString()}`;
+
+			displayRateStats(s);
 		}
 
 		async function loadBreakdown() {
@@ -236,6 +302,16 @@
 		function formatDate(iso) {
 			return new Date(iso).toLocaleString();
 		}
+
+		// Re-position progress text on window resize
+		window.addEventListener('resize', () => {
+			const barEl = document.getElementById('progress-bar');
+			if (barEl) {
+				const widthStr = barEl.style.width;
+				const pct = parseFloat(widthStr) || 0;
+				positionProgressText(pct);
+			}
+		});
 
 		loadStats();
 		loadBreakdown();

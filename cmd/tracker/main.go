@@ -28,6 +28,8 @@ func main() {
 	serverOnly := flag.Bool("server-only", false, "Run only the HTTP server without event processing")
 	generateJSON := flag.String("generate-json", "", "Generate stats JSON to specified path and exit")
 	resetDB := flag.Bool("reset-db", false, "Drop and recreate the roi_tracker schema (fresh start)")
+	reindex := flag.Bool("reindex", false, "Reset sync cursor to re-index from start_height (preserves price cache and existing txs)")
+	backfill := flag.Bool("backfill", false, "Query all contracts from start_height to cursor, inserting any missing txs, then exit")
 	flag.Parse()
 
 	// Setup logger
@@ -86,6 +88,18 @@ func main() {
 	}
 
 	logger.Info("database schema initialized")
+
+	// Reset sync cursor to re-index from start_height (preserves price_cache and processed_burns)
+	if *reindex {
+		logger.Info("resetting sync cursor for reindex (--reindex)", "start_height", cfg.Contract.StartHeight)
+		if _, err := pool.Exec(ctx, `
+			UPDATE roi_tracker.sync_state SET last_processed_event_id = 0 WHERE id = 1
+		`); err != nil {
+			logger.Error("failed to reset sync cursor", "error", err)
+			os.Exit(1)
+		}
+		logger.Info("sync cursor reset, processor will re-index from start_height")
+	}
 
 	// If generate-json mode, create stats file and exit
 	if *generateJSON != "" {
@@ -153,7 +167,7 @@ func main() {
 				logger.With("component", "discovery"),
 				refreshInterval,
 			)
-			if err := disc.Run(ctx, cfg.Contract.Addresses); err != nil {
+			if err := disc.Run(ctx, cfg.Contract.Addresses, cfg.Contract.ExtraCodeIDs); err != nil {
 				logger.Error("contract discovery failed", "error", err)
 				os.Exit(1)
 			}
@@ -161,6 +175,17 @@ func main() {
 			logger.Info("contract discovery complete", "total_contracts", disc.ContractCount())
 
 			proc := processor.New(pool, chainClient, disc, priceFetcher, cfg, logger.With("component", "processor"))
+
+			if *backfill {
+				logger.Info("running backfill mode")
+				if err := proc.Backfill(ctx); err != nil {
+					logger.Error("backfill failed", "error", err)
+					os.Exit(1)
+				}
+				logger.Info("backfill finished, exiting")
+				return
+			}
+
 			go func() {
 				if err := proc.Start(ctx); err != nil {
 					logger.Error("processor error", "error", err)
