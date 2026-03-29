@@ -89,9 +89,19 @@ func main() {
 
 	logger.Info("database schema initialized")
 
-	// Reset sync cursor to re-index from start_height (preserves price_cache and processed_burns)
+	// Reset sync cursor to re-index from start_height (preserves price_cache and processed_burns).
+	// When combined with --backfill, stores the old cursor as the backfill target before resetting.
+	var reindexTarget int64
 	if *reindex {
-		logger.Info("resetting sync cursor for reindex (--reindex)", "start_height", cfg.Contract.StartHeight)
+		// Save the current cursor before resetting so backfill knows the upper bound
+		_ = pool.QueryRow(ctx, `
+			SELECT last_processed_event_id FROM roi_tracker.sync_state WHERE id = 1
+		`).Scan(&reindexTarget)
+
+		logger.Info("resetting sync cursor for reindex (--reindex)",
+			"start_height", cfg.Contract.StartHeight,
+			"previous_cursor", reindexTarget,
+		)
 		if _, err := pool.Exec(ctx, `
 			UPDATE roi_tracker.sync_state SET last_processed_event_id = 0 WHERE id = 1
 		`); err != nil {
@@ -138,12 +148,14 @@ func main() {
 		}
 	}()
 
-	// Create and start HTTP server
+	// Create and start HTTP server (non-fatal in backfill mode)
 	srv := server.New(cfg, pool, logger.With("component", "server"), nil)
 	go func() {
 		if err := srv.Start(); err != nil {
 			logger.Error("HTTP server error", "error", err)
-			cancel()
+			if !*backfill {
+				cancel()
+			}
 		}
 	}()
 
@@ -177,6 +189,17 @@ func main() {
 			proc := processor.New(pool, chainClient, disc, priceFetcher, cfg, logger.With("component", "processor"))
 
 			if *backfill {
+				// If reindex+backfill, temporarily restore cursor so backfill has an upper bound
+				if *reindex && reindexTarget > 0 {
+					logger.Info("reindex+backfill: setting cursor to previous height for backfill", "target", reindexTarget)
+					if _, err := pool.Exec(ctx, `
+						UPDATE roi_tracker.sync_state SET last_processed_event_id = $1 WHERE id = 1
+					`, reindexTarget); err != nil {
+						logger.Error("failed to set backfill target", "error", err)
+						os.Exit(1)
+					}
+				}
+
 				logger.Info("running backfill mode")
 				if err := proc.Backfill(ctx); err != nil {
 					logger.Error("backfill failed", "error", err)

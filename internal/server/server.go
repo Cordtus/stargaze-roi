@@ -115,26 +115,26 @@ func (w *responseWriter) WriteHeader(code int) {
 
 // StatsResponse is the response for the /api/stats endpoint.
 type StatsResponse struct {
-	TargetUSD            string   `json:"target_usd"`
-	GrantAtom            string   `json:"grant_atom,omitempty"`
-	GrantPriceUSD        string   `json:"grant_price_usd,omitempty"`
-	TotalFeesUSDCurrent  string   `json:"total_fees_usd_current"`
-	TotalFeesUSDHist     string   `json:"total_fees_usd_historical"`
-	TotalFeesAtom        string   `json:"total_fees_atom"`
-	TransactionCount     int64    `json:"transaction_count"`
-	PricedTxCount        int64    `json:"priced_tx_count"`
-	ProgressPercent      string   `json:"progress_percent"`
-	AvgAtomPriceUSD      string   `json:"avg_atom_price_usd"`
-	CurrentAtomPriceUSD  string   `json:"current_atom_price_usd,omitempty"`
-	YearsToBreakeven     *float64 `json:"years_to_breakeven"`
-	FirstTxTimestamp     *string  `json:"first_tx_timestamp,omitempty"`
-	LastTxTimestamp       *string `json:"last_tx_timestamp,omitempty"`
-	UpdatedAt            string   `json:"updated_at"`
-	LastProcessedID      int64    `json:"last_processed_event_id"`
-	ContractInfo         string   `json:"contract_info,omitempty"`
-	ChainID              string   `json:"chain_id"`
-	ProposalID           int      `json:"proposal_id,omitempty"`
-	MultisigAddress      string   `json:"multisig_address,omitempty"`
+	TargetUSD           string   `json:"target_usd"`
+	GrantAtom           string   `json:"grant_atom,omitempty"`
+	GrantPriceUSD       string   `json:"grant_price_usd,omitempty"`
+	TotalFeesUSDCurrent string   `json:"total_fees_usd_current"`
+	TotalFeesUSDHist    string   `json:"total_fees_usd_historical"`
+	TotalFeesAtom       string   `json:"total_fees_atom"`
+	TransactionCount    int64    `json:"transaction_count"`
+	PricedTxCount       int64    `json:"priced_tx_count"`
+	ProgressPercent     string   `json:"progress_percent"`
+	AvgAtomPriceUSD     string   `json:"avg_atom_price_usd"`
+	CurrentAtomPriceUSD string   `json:"current_atom_price_usd,omitempty"`
+	YearsToBreakeven    *float64 `json:"years_to_breakeven"`
+	FirstTxTimestamp    *string  `json:"first_tx_timestamp,omitempty"`
+	LastTxTimestamp      *string `json:"last_tx_timestamp,omitempty"`
+	UpdatedAt           string   `json:"updated_at"`
+	LastProcessedID     int64    `json:"last_processed_event_id"`
+	ContractInfo        string   `json:"contract_info,omitempty"`
+	ChainID             string   `json:"chain_id"`
+	ProposalID          int      `json:"proposal_id,omitempty"`
+	MultisigAddress     string   `json:"multisig_address,omitempty"`
 }
 
 // handleStats returns the current fee revenue statistics.
@@ -147,11 +147,11 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	target := s.cfg.TargetUSD()
+	million := decimal.NewFromInt(1_000_000)
 
-	// Convert uatom to ATOM for display
-	totalAtom := stats.TotalUatomBurned.Div(decimal.NewFromInt(1_000_000))
+	totalAtom := stats.TotalUatomBurned.Div(million)
 
-	// Current-price valuation: total ATOM fees * latest cached price
+	// Current-price valuation: total ATOM gas fees * latest cached price
 	var currentPriceUSD decimal.Decimal
 	var currentValuation decimal.Decimal
 	now := time.Now().UTC().Truncate(24 * time.Hour)
@@ -271,9 +271,10 @@ func (s *Server) handleTransactions(w http.ResponseWriter, r *http.Request) {
 		Offset:       offset,
 	}
 
+	million := decimal.NewFromInt(1_000_000)
 	for _, b := range burns {
-		atomAmount := b.UatomAmount.Div(decimal.NewFromInt(1_000_000))
-		resp.Transactions = append(resp.Transactions, TransactionItem{
+		atomAmount := b.UatomAmount.Div(million)
+		item := TransactionItem{
 			TxHash:       b.TxHash,
 			Height:       b.Height,
 			Timestamp:    b.Timestamp.Format(time.RFC3339),
@@ -284,7 +285,8 @@ func (s *Server) handleTransactions(w http.ResponseWriter, r *http.Request) {
 			Sender:       b.Sender,
 			Action:       b.Action,
 			Contract:     b.Contract,
-		})
+		}
+		resp.Transactions = append(resp.Transactions, item)
 	}
 
 	s.writeJSON(w, resp)
@@ -309,12 +311,13 @@ func (s *Server) handleBreakdown(w http.ResponseWriter, r *http.Request) {
 
 	var resp BreakdownResponse
 
-	// By action
+	// By action -- gas fees only
 	rows, err := s.pool.Query(ctx, `
 		SELECT COALESCE(NULLIF(action, ''), 'unknown'), COUNT(*),
 		       (SUM(uatom_amount)/1000000)::TEXT
 		FROM roi_tracker.processed_burns
-		GROUP BY action ORDER BY SUM(uatom_amount) DESC
+		GROUP BY action
+		ORDER BY SUM(uatom_amount) DESC
 	`)
 	if err == nil {
 		defer rows.Close()
@@ -326,7 +329,7 @@ func (s *Server) handleBreakdown(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// By contract (with label from discovered_contracts)
+	// By contract (with label from discovered_contracts) -- gas fees only
 	rows2, err := s.pool.Query(ctx, `
 		SELECT COALESCE(dc.label, pb.contract), COUNT(*),
 		       (SUM(pb.uatom_amount)/1000000)::TEXT

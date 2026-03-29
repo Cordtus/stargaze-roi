@@ -260,6 +260,38 @@ main {
 	padding: 0;
 }
 
+.revenue-breakdown {
+	margin-top: 1.5rem;
+	padding-top: 1rem;
+	border-top: 1px solid var(--border);
+}
+
+.revenue-breakdown h3 {
+	font-size: 0.85rem;
+	color: var(--text-secondary);
+	margin-bottom: 0.75rem;
+	font-weight: 500;
+	text-transform: uppercase;
+	letter-spacing: 0.05em;
+}
+
+.revenue-row {
+	display: flex;
+	justify-content: space-between;
+	padding: 0.4rem 0;
+	font-size: 0.85rem;
+}
+
+.revenue-label {
+	color: var(--text-secondary);
+}
+
+.revenue-value {
+	color: var(--accent-light);
+	font-family: 'SF Mono', Monaco, 'Courier New', monospace;
+	font-size: 0.8rem;
+}
+
 .breakdown-item {
 	display: flex;
 	justify-content: space-between;

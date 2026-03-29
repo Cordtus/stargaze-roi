@@ -88,6 +88,9 @@ BEGIN
         transaction_count = (SELECT COUNT(*) FROM roi_tracker.processed_burns),
         first_burn_timestamp = (SELECT MIN(timestamp) FROM roi_tracker.processed_burns),
         last_burn_timestamp = (SELECT MAX(timestamp) FROM roi_tracker.processed_burns),
+        total_protocol_fee_uatom = (SELECT COALESCE(SUM(protocol_fee_uatom), 0) FROM roi_tracker.processed_burns),
+        total_listing_fee_uatom = (SELECT COALESCE(SUM(listing_fee_uatom), 0) FROM roi_tracker.processed_burns),
+        total_creation_fee_uatom = (SELECT COALESCE(SUM(creation_fee_uatom), 0) FROM roi_tracker.processed_burns),
         last_updated = NOW()
     WHERE id = 1;
     RETURN NEW;
@@ -103,12 +106,17 @@ CREATE TRIGGER trg_update_stats
 `
 
 // Migration contains SQL to migrate from the old schema (wasm_event_id unique)
-// to the new schema (tx_hash unique, action/contract columns).
+// to the new schema (tx_hash unique, action/contract columns, revenue columns).
 // Safe to run repeatedly -- all operations are idempotent.
 const Migration = `
 -- Add new columns if missing
 ALTER TABLE roi_tracker.processed_burns ADD COLUMN IF NOT EXISTS action TEXT;
 ALTER TABLE roi_tracker.processed_burns ADD COLUMN IF NOT EXISTS contract TEXT;
+
+-- Revenue breakdown columns (gas fee is the existing uatom_amount)
+ALTER TABLE roi_tracker.processed_burns ADD COLUMN IF NOT EXISTS protocol_fee_uatom NUMERIC NOT NULL DEFAULT 0;
+ALTER TABLE roi_tracker.processed_burns ADD COLUMN IF NOT EXISTS listing_fee_uatom NUMERIC NOT NULL DEFAULT 0;
+ALTER TABLE roi_tracker.processed_burns ADD COLUMN IF NOT EXISTS creation_fee_uatom NUMERIC NOT NULL DEFAULT 0;
 
 -- Migrate unique constraint from wasm_event_id to tx_hash.
 -- Drop old constraint if it exists, add new one if missing.
@@ -136,4 +144,9 @@ BEGIN
     END IF;
 END
 $$;
+
+-- Add revenue columns to stats_cache
+ALTER TABLE roi_tracker.stats_cache ADD COLUMN IF NOT EXISTS total_protocol_fee_uatom NUMERIC NOT NULL DEFAULT 0;
+ALTER TABLE roi_tracker.stats_cache ADD COLUMN IF NOT EXISTS total_listing_fee_uatom NUMERIC NOT NULL DEFAULT 0;
+ALTER TABLE roi_tracker.stats_cache ADD COLUMN IF NOT EXISTS total_creation_fee_uatom NUMERIC NOT NULL DEFAULT 0;
 `

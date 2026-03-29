@@ -230,11 +230,19 @@ func (p *Processor) insertTxBatch(ctx context.Context, txs map[string]*chain.Con
 
 		tag, err := p.pool.Exec(ctx, `
 			INSERT INTO roi_tracker.processed_burns
-			(tx_hash, height, timestamp, uatom_amount, atom_price_usd, usd_value, sender, action, contract)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-			ON CONFLICT (tx_hash) DO NOTHING
+			(tx_hash, height, timestamp, uatom_amount, atom_price_usd, usd_value, sender, action, contract,
+			 protocol_fee_uatom, listing_fee_uatom, creation_fee_uatom)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			ON CONFLICT (tx_hash) DO UPDATE SET
+				protocol_fee_uatom = EXCLUDED.protocol_fee_uatom,
+				listing_fee_uatom = EXCLUDED.listing_fee_uatom,
+				creation_fee_uatom = EXCLUDED.creation_fee_uatom,
+				action = EXCLUDED.action
 		`, tx.TxHash, tx.Height, timestamp, feeUatom.String(), atomPrice.String(), usdValue.String(),
-			tx.Sender, tx.Action, tx.Contract)
+			tx.Sender, tx.Action, tx.Contract,
+			decimal.NewFromInt(tx.ProtocolFeeUatom).String(),
+			decimal.NewFromInt(tx.ListingFeeUatom).String(),
+			decimal.NewFromInt(tx.CreationFeeUatom).String())
 
 		if err != nil {
 			p.logger.Error("backfill insert failed", "tx_hash", tx.TxHash, "error", err)
@@ -336,11 +344,19 @@ func (p *Processor) processNewTxs(ctx context.Context) error {
 
 		_, err = p.pool.Exec(ctx, `
 			INSERT INTO roi_tracker.processed_burns
-			(tx_hash, height, timestamp, uatom_amount, atom_price_usd, usd_value, sender, action, contract)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-			ON CONFLICT (tx_hash) DO NOTHING
+			(tx_hash, height, timestamp, uatom_amount, atom_price_usd, usd_value, sender, action, contract,
+			 protocol_fee_uatom, listing_fee_uatom, creation_fee_uatom)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			ON CONFLICT (tx_hash) DO UPDATE SET
+				protocol_fee_uatom = EXCLUDED.protocol_fee_uatom,
+				listing_fee_uatom = EXCLUDED.listing_fee_uatom,
+				creation_fee_uatom = EXCLUDED.creation_fee_uatom,
+				action = EXCLUDED.action
 		`, tx.TxHash, tx.Height, timestamp, feeUatom.String(), atomPrice.String(), usdValue.String(),
-			tx.Sender, tx.Action, tx.Contract)
+			tx.Sender, tx.Action, tx.Contract,
+			decimal.NewFromInt(tx.ProtocolFeeUatom).String(),
+			decimal.NewFromInt(tx.ListingFeeUatom).String(),
+			decimal.NewFromInt(tx.CreationFeeUatom).String())
 
 		if err != nil {
 			p.logger.Error("failed to insert fee record", "tx_hash", tx.TxHash, "error", err)

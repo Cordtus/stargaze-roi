@@ -38,17 +38,17 @@
 				<div class="tab-content active" id="tab-overview">
 					<div class="stats-row">
 						<div class="stat">
-							<span class="label">Fee Revenue (current value)</span>
+							<span class="label">Total Revenue (current value)</span>
 							<span class="value" id="fees-usd-current">-</span>
 							<span class="note" id="current-price-note"></span>
 						</div>
 						<div class="stat">
-							<span class="label">Fee Revenue (at time of tx)</span>
+							<span class="label">Total Revenue (at time of tx)</span>
 							<span class="value" id="fees-usd-hist">-</span>
 							<span class="note" id="hist-price-note"></span>
 						</div>
 						<div class="stat">
-							<span class="label">Fee Revenue (ATOM)</span>
+							<span class="label">Total Revenue (ATOM)</span>
 							<span class="value" id="fees-atom">0.000000</span>
 						</div>
 						<div class="stat">
@@ -66,6 +66,26 @@
 						<div class="stat">
 							<span class="label">Avg ATOM Price (VWAP)</span>
 							<span class="value" id="avg-atom-price">$0.00</span>
+						</div>
+					</div>
+
+					<div class="revenue-breakdown">
+						<h3>Revenue Sources (ATOM)</h3>
+						<div class="revenue-row">
+							<span class="revenue-label">Gas Fees</span>
+							<span class="revenue-value" id="rev-gas">-</span>
+						</div>
+						<div class="revenue-row">
+							<span class="revenue-label">Protocol Fees (2% of sales)</span>
+							<span class="revenue-value" id="rev-protocol">-</span>
+						</div>
+						<div class="revenue-row">
+							<span class="revenue-label">Listing Fees</span>
+							<span class="revenue-value" id="rev-listing">-</span>
+						</div>
+						<div class="revenue-row">
+							<span class="revenue-label">Creation Fees</span>
+							<span class="revenue-value" id="rev-creation">-</span>
 						</div>
 					</div>
 				</div>
@@ -266,6 +286,14 @@
 
 			document.getElementById('data-updated').textContent = s.updated_at ? `Data updated: ${formatDate(s.updated_at)}` : 'Data updated: -';
 			document.getElementById('page-loaded').textContent = `Loaded: ${new Date().toLocaleString()}`;
+
+			// Revenue breakdown
+			if (s.revenue) {
+				document.getElementById('rev-gas').textContent = `${num(s.revenue.gas_fees).toFixed(6)} ATOM`;
+				document.getElementById('rev-protocol').textContent = `${num(s.revenue.protocol_fees).toFixed(6)} ATOM`;
+				document.getElementById('rev-listing').textContent = `${num(s.revenue.listing_fees).toFixed(6)} ATOM`;
+				document.getElementById('rev-creation').textContent = `${num(s.revenue.creation_fees).toFixed(6)} ATOM`;
+			}
 
 			displayRateStats(s);
 		}

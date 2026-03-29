@@ -57,7 +57,7 @@ func TestStatsResponseJSON(t *testing.T) {
 	years := 42.5
 	resp := StatsResponse{
 		TargetUSD:        "1500000.00",
-		TotalFeesUSD:     "100.00",
+		TotalFeesUSDHist: "100.00",
 		TotalFeesAtom:    "10.000000",
 		TransactionCount: 5,
 		ProgressPercent:  "0.0066666667",
@@ -65,6 +65,13 @@ func TestStatsResponseJSON(t *testing.T) {
 		ChainID:          "cosmoshub-4",
 		ProposalID:       1017,
 		GrantAtom:        "699626.000000",
+		Revenue: RevenueBreakdown{
+			GasFees:      "9.500000",
+			ProtocolFees: "0.300000",
+			ListingFees:  "0.100000",
+			CreationFees: "0.100000",
+			Total:        "10.000000",
+		},
 	}
 
 	data, err := json.Marshal(resp)

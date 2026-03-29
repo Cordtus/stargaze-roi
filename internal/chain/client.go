@@ -63,14 +63,17 @@ func (c *Client) Close() error {
 
 // ContractTx represents a transaction that interacted with a tracked contract.
 type ContractTx struct {
-	TxHash    string
-	Height    int64
-	Sender    string
-	FeeUatom  int64 // Gas fee paid in uatom
-	Action    string
-	Contract  string
-	CodeID    int64 // Code ID from instantiate/migrate events (0 if not applicable)
-	Timestamp time.Time
+	TxHash           string
+	Height           int64
+	Sender           string
+	FeeUatom         int64 // Gas fee paid in uatom
+	Action           string
+	Contract         string
+	CodeID           int64 // Code ID from instantiate/migrate events (0 if not applicable)
+	Timestamp        time.Time
+	ProtocolFeeUatom int64 // 2% marketplace protocol fee from finalize-sale
+	ListingFeeUatom  int64 // Listing deposit from set-ask, forwarded to protocol
+	CreationFeeUatom int64 // Minter creation fee from create_minter
 }
 
 // txResponse represents a decoded transaction response.
@@ -216,6 +219,7 @@ func (c *Client) queryByPrefix(ctx context.Context, prefix, contractAddr string,
 
 // extractContractTxs parses transaction responses into ContractTx structs.
 // Events are at txResponse.events[] (top-level), not in logs.
+// Extracts gas fees, protocol fees, listing fees, and creation fees.
 func (c *Client) extractContractTxs(txResponses []txResponse, contractAddr string) []ContractTx {
 	var txs []ContractTx
 	seen := map[string]bool{} // Dedup by tx hash (multiple wasm events per tx)
@@ -238,14 +242,19 @@ func (c *Client) extractContractTxs(txResponses []txResponse, contractAddr strin
 			Timestamp: ts,
 		}
 
-		// Extract fee from the first coin_spent event (tx fee payment)
-		// Extract wasm action and sender from wasm events
-		// Extract code_id from instantiate/migrate events
+		// Track whether specific revenue-generating events were seen.
+		var hasSetAsk bool
+		var hasFinalizeSale bool
+
+		// Track the marketplace contract address from wasm-set-ask for listing fee detection.
+		var marketplaceAddr string
+
 		feeFound := false
 		for _, evt := range txResp.Events {
 			switch evt.Type {
 			case "coin_spent":
 				if !feeFound {
+					// First coin_spent event = gas fee to fee collector (no msg_index)
 					for _, a := range evt.Attributes {
 						if a.Key == "amount" {
 							ct.FeeUatom = parseUatomAmount(a.Value)
@@ -256,12 +265,14 @@ func (c *Client) extractContractTxs(txResponses []txResponse, contractAddr strin
 						}
 					}
 				}
+
 			case "wasm":
 				for _, a := range evt.Attributes {
 					if a.Key == "action" && ct.Action == "" {
 						ct.Action = a.Value
 					}
 				}
+
 			case "instantiate", "migrate":
 				for _, a := range evt.Attributes {
 					if a.Key == "code_id" && ct.CodeID == 0 {
@@ -271,10 +282,83 @@ func (c *Client) extractContractTxs(txResponses []txResponse, contractAddr strin
 						ct.Contract = a.Value
 					}
 				}
+
+			case "wasm-finalize-sale":
+				hasFinalizeSale = true
+				if ct.Action == "" {
+					ct.Action = "finalize-sale"
+				}
+				// Accumulate protocol fees across all sales in this tx
+				for _, a := range evt.Attributes {
+					if a.Key == "protocol" {
+						var amt int64
+						fmt.Sscanf(a.Value, "%d", &amt)
+						ct.ProtocolFeeUatom += amt
+					}
+				}
+
+			case "wasm-set-ask":
+				hasSetAsk = true
+				for _, a := range evt.Attributes {
+					if a.Key == "_contract_address" {
+						marketplaceAddr = a.Value
+					}
+				}
+				if ct.Action == "" {
+					ct.Action = "set-ask"
+				}
+
 			default:
-				// Custom wasm event types: wasm-set-ask, wasm-finalize-sale, etc.
 				if ct.Action == "" && strings.HasPrefix(evt.Type, "wasm-") {
 					ct.Action = strings.TrimPrefix(evt.Type, "wasm-")
+				}
+			}
+		}
+
+		// Listing fees: when set-ask is present (even in multi-msg txs like approve+set-ask),
+		// look for coin_spent from the marketplace contract (forwarding listing deposit to fee collector).
+		// Skip if finalize-sale is also present (sale disbursements are not listing fees).
+		if hasSetAsk && !hasFinalizeSale && marketplaceAddr != "" {
+			for _, evt := range txResp.Events {
+				if evt.Type != "coin_spent" {
+					continue
+				}
+				var spender, amount string
+				for _, a := range evt.Attributes {
+					switch a.Key {
+					case "spender":
+						spender = a.Value
+					case "amount":
+						amount = a.Value
+					}
+				}
+				if spender == marketplaceAddr {
+					ct.ListingFeeUatom += parseUatomAmount(amount)
+				}
+			}
+		}
+
+		// Creation fees: funds sent by the tx sender with create_minter action.
+		// These are non-gas coin_spent events (have msg_index) from the sender.
+		if ct.Action == "create_minter" {
+			for _, evt := range txResp.Events {
+				if evt.Type != "coin_spent" {
+					continue
+				}
+				var spender, amount string
+				var hasMsgIndex bool
+				for _, a := range evt.Attributes {
+					switch a.Key {
+					case "spender":
+						spender = a.Value
+					case "amount":
+						amount = a.Value
+					case "msg_index":
+						hasMsgIndex = true
+					}
+				}
+				if hasMsgIndex && spender == ct.Sender {
+					ct.CreationFeeUatom += parseUatomAmount(amount)
 				}
 			}
 		}
